@@ -1,0 +1,98 @@
+# 数字电源：ITECH::IT6302
+
+import logging
+from typing import Optional
+
+from pyvisa.resources import Resource
+
+from ..instrument_types import (
+    InstrumentRegistry,
+    PowerSupplyBase,
+)
+from ..visa_based_instrument import VisaBasedInstrument
+
+logger = logging.getLogger(__name__)
+
+
+class ItechIT6302(VisaBasedInstrument, PowerSupplyBase):
+    """ITECH IT6302 数字电源驱动"""
+
+    def __init__(self, resource: Optional[Resource]) -> None:
+        super().__init__(resource)
+        logger.debug(f"Initializing Itech::IT6302 with {resource}")
+        self.channel = 1
+        self.beep_ = False
+        self.output_enabled = False
+
+        cmds = ["SYSTem:REMote"]
+        self.run_cmds(cmds)
+
+    def beep(self):
+        if self.beep_:
+            self.run_cmds(["SYSTem:BEEPer"])
+
+    def set_voltage(self, volt: float, channel: int = 1) -> None:
+        """设置输出电压并自动使能输出"""
+        if not (0.0 <= volt <= 32.0):
+            raise ValueError("'voltage' parameter out of range (0.0 - 32.0)")
+
+        if not (1 <= channel <= 3):
+            raise ValueError("'channel' parameter out of range (1 - 3)")
+
+        cmds = [
+            f"INSTrument:SELect CH{channel}",
+            f"VOLTage:LEVel {volt}",
+        ]
+        if not self.run_cmds(cmds):
+            raise RuntimeError(f"Failed to set voltage {volt}V on CH{channel}")
+
+        if not self.output_enabled:
+            self.output_enable(channel)
+        self.beep()
+
+    def output_enable(self, channel: int = 0) -> None:
+        """使能输出"""
+        s = "ON"
+        if channel < 1:
+            cmds = [f"OUTPut:STATe {s}"]
+        else:
+            cmds = [
+                f"INSTrument:SELect CH{channel}",
+                f"CHANnel:OUTPut:STATe {s}",
+            ]
+        if not self.run_cmds(cmds):
+            raise RuntimeError(f"Failed to enable output on CH{channel}")
+        self.output_enabled = True
+
+    def output_disable(self, channel: int = 0) -> None:
+        """关闭输出"""
+        s = "OFF"
+        if channel < 1:
+            cmds = [f"OUTPut:STATe {s}"]
+        else:
+            cmds = [
+                f"INSTrument:SELect CH{channel}",
+                f"CHANnel:OUTPut:STATe {s}",
+            ]
+        if not self.run_cmds(cmds):
+            raise RuntimeError(f"Failed to disable output on CH{channel}")
+        self.output_enabled = False
+
+    def close(self) -> None:
+        """关闭仪器：设置安全电压并关闭输出"""
+        try:
+            self.set_voltage(3.3, 3)
+            self.set_voltage(3.3, 2)
+            self.set_voltage(3.3, 1)
+            self.output_disable(0)
+            self.run_cmds(["SYSTem:Loc"])
+        except Exception as ex:
+            logger.warning(f"Error during close: {ex}")
+
+
+# 注册到仪器注册表
+InstrumentRegistry.register_power_supply(
+    "ITECH::IT6302",
+    ItechIT6302,
+    supported=("VOLTAGE",),
+)
