@@ -4,12 +4,13 @@
 先查 `DeviceTable`（无 I/O），未命中时通过 `_identify` 回退扫描。
 """
 
+from __future__ import annotations
+
 import logging
 import time
-from typing import Dict, List, Optional
 
 from .device_table import DeviceTable
-from .instrument_types import InstrumentInfo
+from .instrument_types import InstrumentBase, InstrumentInfo
 from .transport_backend import TransportBackend
 
 logger = logging.getLogger(__name__)
@@ -39,34 +40,40 @@ class VisaTransportBackend(TransportBackend):
             vendor = vendor_items[0]
         return f"{vendor}::{model}"
 
-    def __init__(self, device_table: Optional[DeviceTable] = None) -> None:
-        super().__init__(device_table)
+    def __init__(
+        self,
+        device_table: DeviceTable | None = None,
+        persistent_store: DeviceTable | None = None,
+    ) -> None:
+        super().__init__(device_table, persistent_store)
         import pyvisa
         try:
             self._rm = pyvisa.ResourceManager()
         except pyvisa.VisaIOError:
             self._rm = pyvisa.ResourceManager('@py')
-        self._discovered_bauds: Dict[str, int] = {}
+        self._discovered_bauds: dict[str, int] = {}
 
-    def _enum(self) -> List[str]:
+    def _enum(self) -> list[str]:
         return list(self._rm.list_resources("?*"))
 
-    def _identify(self, addrress: str) -> Optional[InstrumentInfo]:
+    def _identify(self, addrress: str) -> InstrumentInfo | None:
         if addrress.startswith("ASRL"):
             return self._identify_serial(addrress)
         return self._identify_non_serial(addrress)
 
-    def _serial_baud(self, addrress: str) -> Optional[int]:
+    def _serial_baud(self, addrress: str) -> int | None:
         return self._discovered_bauds.get(addrress)
 
     def _allow_auto_identify(self, addrress: str) -> bool:
-        # USB 等地址内嵌硬件序列号、唯一稳定，存在性检查时可自动 *IDN?* 实现即插即用；
-        # 串口（ASRL）地址随 USB 插座漂移，不自动识别，由显式 scan() 确认
+        # USB 等地址内嵌硬件序列号、唯一稳定，存在性检查时可自动 *IDN?* 实现即插即用，
+        # 其设备信息持久化存储（不依赖运行时 device_table）；
+        # 串口（ASRL）地址随 USB 插座漂移，不自动识别，设备信息存运行时表，
+        # 由显式 scan() 确认
         return not addrress.startswith("ASRL")
 
     # ── 非串口设备 ─────────────────────────────────────
 
-    def _identify_non_serial(self, addrress: str) -> Optional[InstrumentInfo]:
+    def _identify_non_serial(self, addrress: str) -> InstrumentInfo | None:
         import pyvisa
         import pyvisa.constants
 
@@ -90,7 +97,7 @@ class VisaTransportBackend(TransportBackend):
 
     # ── 串口设备 ───────────────────────────────────────
 
-    def _identify_serial(self, addrress: str) -> Optional[InstrumentInfo]:
+    def _identify_serial(self, addrress: str) -> InstrumentInfo | None:
         # 优先用设备表缓存的波特率（已知设备只试 1 次）
         if self._device_table is not None:
             entry = self._device_table.get(addrress)
@@ -108,7 +115,7 @@ class VisaTransportBackend(TransportBackend):
                 return info
         return None
 
-    def _try_baud(self, addrress: str, baud: int) -> Optional[InstrumentInfo]:
+    def _try_baud(self, addrress: str, baud: int) -> InstrumentInfo | None:
         import pyvisa
         import pyvisa.constants
 
@@ -143,7 +150,7 @@ class VisaTransportBackend(TransportBackend):
 
     # ── 构建 InstrumentInfo ─────────────────────────────
 
-    def _build_info(self, addrress: str, label: str) -> Optional[InstrumentInfo]:
+    def _build_info(self, addrress: str, label: str) -> InstrumentInfo | None:
         try:
             from .instrument_types import InstrumentRegistry
             inst_type, supported = InstrumentRegistry.get_info(label)
@@ -159,7 +166,7 @@ class VisaTransportBackend(TransportBackend):
 
     # ── 连接管理 ────────────────────────────────────────
 
-    def open(self, address: str, label: str, timeout: int = 30000) -> 'InstrumentBase':
+    def open(self, address: str, label: str, timeout: int = 30000) -> InstrumentBase:
         from .instrument_types import make_instrument
 
         resource = self._rm.open_resource(address)

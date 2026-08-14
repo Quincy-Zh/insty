@@ -5,10 +5,12 @@
 由扫描模块（``scan.py``）生成，也可手动维护。
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .instrument_types import InstrumentInfo
 
@@ -34,14 +36,14 @@ class DeviceTable:
         ...     print(entry["label"])
     """
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    def __init__(self, path: str | None = None) -> None:
         """初始化设备表
 
         Args:
             path: JSON 文件路径，为 ``None`` 时不加载/保存文件
         """
         self._path = path
-        self._data: Dict[str, dict] = {}
+        self._data: dict[str, dict] = {}
         if path is not None:
             self._load()
 
@@ -66,15 +68,15 @@ class DeviceTable:
             logger.warning(f"Failed to save device table: {ex}")
 
     @property
-    def path(self) -> Optional[str]:
+    def path(self) -> str | None:
         """当前关联的文件路径，``None`` 表示纯内存模式"""
         return self._path
 
     @path.setter
-    def path(self, value: Optional[str]) -> None:
+    def path(self, value: str | None) -> None:
         self._path = value
 
-    def get(self, address: str) -> Optional[dict]:
+    def get(self, address: str) -> dict | None:
         """获取指定地址的缓存信息
 
         Args:
@@ -89,9 +91,9 @@ class DeviceTable:
         self,
         address: str,
         label: str,
-        serial_baud: Optional[int] = None,
-        inst_type: Optional[str] = None,
-        supported: Optional[List[str]] = None,
+        serial_baud: int | None = None,
+        inst_type: str | None = None,
+        supported: list[str] | None = None,
     ) -> None:
         """更新指定地址的信息
 
@@ -108,7 +110,7 @@ class DeviceTable:
             if existing_addr != address and self._data[existing_addr].get("label") == label:
                 del self._data[existing_addr]
                 logger.info(f"Removed stale entry {existing_addr} -> {label}")
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "label": label,
             "serial_baud": serial_baud,
         }
@@ -128,7 +130,7 @@ class DeviceTable:
         """返回所有缓存的地址集合"""
         return set(self._data.keys())
 
-    def build_info(self, address: str) -> Optional[InstrumentInfo]:
+    def build_info(self, address: str) -> InstrumentInfo | None:
         """从缓存数据构造 InstrumentInfo
 
         优先从注册表按 label 解析类型与能力（始终与驱动一致），

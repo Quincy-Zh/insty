@@ -5,16 +5,21 @@
 - `_enum()`: 枚举当前可达的地址列表
 - `_identify()`: 通过 I/O 查询识别单台设备
 - `_serial_baud()`: （可选）串口设备返回波特率
-- `_allow_auto_identify()`: （可选）discover 时是否对该地址自动识别
+- `_allow_auto_identify()`: （可选）discover 时是否对该地址自动识别；
+  同时决定该地址的设备信息存储在哪张表（稳定唯一 → 持久存储）
+
+存储分派：地址稳定唯一的设备（如 USB/TCPIP，`_allow_auto_identify` 为 True）
+走持久存储（跨项目保留）；串口等地址会漂移的设备走运行时设备表。
 
 存在性检查（`discover()`，运行时默认路径，无 *IDN?*）→
 查表回退识别（仅地址稳定唯一的设备，如 USB）→
 显式全量识别（`scan()`，用户触发，针对串口等地址会漂移的设备）。
 """
 
+from __future__ import annotations
+
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
 from .device_table import DeviceTable
 from .instrument_types import InstrumentBase, InstrumentInfo
@@ -25,13 +30,25 @@ logger = logging.getLogger(__name__)
 class TransportBackend(ABC):
     """传输后端抽象基类"""
 
-    def __init__(self, device_table: Optional[DeviceTable] = None) -> None:
+    def __init__(
+        self,
+        device_table: DeviceTable | None = None,
+        persistent_store: DeviceTable | None = None,
+    ) -> None:
         """初始化传输后端
 
         Args:
-            device_table: 设备信息表，用于缓存已知设备的能力信息
+            device_table: 运行时设备信息表（串口等地址会漂移的设备）
+            persistent_store: 持久设备存储（USB/TCPIP 等地址稳定唯一的设备）
         """
         self._device_table = device_table
+        self._persistent_store = persistent_store
+
+    def _storage_for(self, address: str) -> DeviceTable | None:
+        """按地址类型选择存储：稳定唯一（如 USB/TCPIP）→ 持久存储；其余 → 运行时表"""
+        if self._allow_auto_identify(address):
+            return self._persistent_store
+        return self._device_table
 
     @property
     def name(self) -> str:
@@ -41,16 +58,15 @@ class TransportBackend(ABC):
     # ── 子类需实现的抽象方法 ────────────────────────────
 
     @abstractmethod
-    def _enum(self) -> List[str]:
+    def _enum(self) -> list[str]:
         """枚举当前可达的仪器地址列表
 
         Returns:
             地址列表
         """
-        pass
 
     @abstractmethod
-    def _identify(self, address: str) -> Optional[InstrumentInfo]:
+    def _identify(self, address: str) -> InstrumentInfo | None:
         """通过 I/O 查询识别单台设备（discover 回退 / scan 时调用）
 
         Args:
@@ -59,7 +75,6 @@ class TransportBackend(ABC):
         Returns:
             识别成功返回 InstrumentInfo，否则返回 None
         """
-        pass
 
     @abstractmethod
     def open(self, address: str, label: str, timeout: int) -> InstrumentBase:
@@ -73,11 +88,10 @@ class TransportBackend(ABC):
         Returns:
             仪器实例
         """
-        pass
 
     # ── 可选钩子 ────────────────────────────────────────
 
-    def _serial_baud(self, address: str) -> Optional[int]:
+    def _serial_baud(self, address: str) -> int | None:
         """返回串口设备的波特率（非串口返回 None）
 
         子类可重写此方法以提供波特率信息。
@@ -91,6 +105,9 @@ class TransportBackend(ABC):
         地址稳定唯一的设备（如 USB 内嵌序列号）可返回 ``True`` 实现即插即用；
         串口等地址会漂移的设备保持 ``False``，由显式 ``scan()`` 识别。
 
+        该返回值同时兼作存储分派（见 :meth:`_storage_for`）：
+        ``True`` 表示地址稳定唯一，设备信息持久化存储。
+
         Args:
             address: 仪器地址
 
@@ -101,12 +118,12 @@ class TransportBackend(ABC):
 
     # ── 模板方法 ────────────────────────────────────────
 
-    def discover(self) -> List[InstrumentInfo]:
+    def discover(self) -> list[InstrumentInfo]:
         """发现当前在线且身份已知的仪器（存在性检查，默认不做 *IDN?）
 
         模板方法：
         1. `_enum()` 枚举地址
-        2. 查 `DeviceTable` 获取信息（命中则跳过 I/O）
+        2. 按地址类型查对应存储（`_storage_for()`，命中则跳过 I/O）
         3. 未命中且 ``_allow_auto_identify()`` 允许时调用 ``_identify()`` 识别并写表
 
         需要全量识别（尤其串口）时调用 ``scan()``。
@@ -114,18 +131,19 @@ class TransportBackend(ABC):
         Returns:
             可用仪器列表，每项包含地址、标识、类别和支持能力
         """
-        rc: List[InstrumentInfo] = []
+        rc: list[InstrumentInfo] = []
 
         for addr in self._enum():
-            info: Optional[InstrumentInfo] = None
+            store = self._storage_for(addr)
+            info: InstrumentInfo | None = None
 
-            if self._device_table is not None:
-                info = self._device_table.build_info(addr)
+            if store is not None:
+                info = store.build_info(addr)
 
             if info is None and self._allow_auto_identify(addr):
                 info = self._identify(addr)
-                if info is not None and self._device_table is not None:
-                    self._device_table.set(
+                if info is not None and store is not None:
+                    store.set(
                         addr,
                         info.label,
                         serial_baud=self._serial_baud(addr),
@@ -141,16 +159,17 @@ class TransportBackend(ABC):
 
         return rc
 
-    def scan(self) -> List[InstrumentInfo]:
+    def scan(self) -> list[InstrumentInfo]:
         """显式全量识别（对枚举到的每个地址执行 ``*IDN?`` 并写表）
 
         耗时较高（串口还需逐档波特率试探），仅在设备连接变化
         （尤其串口换口）时由用户显式调用，重建设备表。
+        识别结果按地址类型写入对应存储（稳定唯一 → 持久存储）。
 
         Returns:
             识别出的仪器列表
         """
-        rc: List[InstrumentInfo] = []
+        rc: list[InstrumentInfo] = []
 
         for addr in self._enum():
             try:
@@ -160,8 +179,9 @@ class TransportBackend(ABC):
                 info = None
 
             if info is not None:
-                if self._device_table is not None:
-                    self._device_table.set(
+                store = self._storage_for(addr)
+                if store is not None:
+                    store.set(
                         addr,
                         info.label,
                         serial_baud=self._serial_baud(addr),
@@ -188,4 +208,3 @@ class TransportBackend(ABC):
 
     def shutdown(self) -> None:
         """释放后端占用的资源（可选重写）"""
-        pass

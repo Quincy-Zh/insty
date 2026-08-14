@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Optional
 
 from pyvisa.constants import VI_ATTR_ASRL_BAUD, VI_ATTR_TMO_VALUE
 from pyvisa.resources import Resource
@@ -30,7 +29,7 @@ _MEAS_MAP = {
 class ZDS1104(VisaBasedInstrument, OscilloscopeBase):
     """致远 ZDS1104 示波器驱动"""
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
         logger.debug(f"Initializing ZHIYUAN::ZDS1104 with {resource}")
         self.channel = 1
@@ -62,7 +61,7 @@ class ZDS1104(VisaBasedInstrument, OscilloscopeBase):
                     self.timeout = 300
 
     def _measure(
-        self, key: str, channel: int = 1, count_min: Optional[int] = None
+        self, key: str, channel: int = 1, count_min: int | None = None
     ) -> float:
         """执行单项测量并返回平均值"""
         if count_min is None:
@@ -159,7 +158,7 @@ class ZDS1104(VisaBasedInstrument, OscilloscopeBase):
                 self.visa_inst.read_bytes(1)  # type: ignore # 文件尾 '\n'(0x0A)
             else:
                 logger.warning(f'Invalid resp: {data[:16].hex(" ")}')
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             logger.warning(f"Fail to read image data: {ex}")
             data_.clear()
 
@@ -179,7 +178,7 @@ class ZDS1104(VisaBasedInstrument, OscilloscopeBase):
 
             return data
 
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             logger.error(f"Screenshot failed: {ex}")
             return b""
 

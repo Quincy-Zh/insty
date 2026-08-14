@@ -1,9 +1,9 @@
-# 数字万用表：KEITHLEY::DMM6500
+from __future__ import annotations
 
+# 数字万用表：KEITHLEY::DMM6500
 import logging
 import math
 import time
-from typing import Dict, Optional
 
 from pyvisa.resources import Resource
 
@@ -28,7 +28,7 @@ _SUPPORTED_FUNCS = {
 class KeithleyDMM6500(VisaBasedInstrument, DMMBase):
     """Keithley DMM6500 数字万用表驱动"""
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
         logger.debug(f"Initializing KeithleyDMM6500 with {resource}")
         self.buffer_size = 100
@@ -46,7 +46,7 @@ class KeithleyDMM6500(VisaBasedInstrument, DMMBase):
             cnt += 1
             time.sleep(0.1)
 
-    def _read_statistics(self, buffer_name: str) -> Optional[Dict[str, float]]:
+    def _read_statistics(self, buffer_name: str) -> dict[str, float] | None:
         """从数据缓冲区读取统计值"""
         statistics_values = {}
         for el in ("MINimum", "AVERage", "MAXimum", "STDDev"):
@@ -77,7 +77,7 @@ class KeithleyDMM6500(VisaBasedInstrument, DMMBase):
             time.sleep(0.01)
         return True
 
-    def _setup(self, key: str, param: Dict) -> None:
+    def _setup(self, key: str, param: dict) -> None:
         """配置测量参数"""
         key = key.lower()
         if key not in _SUPPORTED_FUNCS:
@@ -96,16 +96,15 @@ class KeithleyDMM6500(VisaBasedInstrument, DMMBase):
 
         autozero = param.get("autozero", True)
         if not isinstance(autozero, bool):
-            raise ValueError("'autozero' parameter must be a boolean")
+            raise TypeError("'autozero' parameter must be a boolean")
 
         filter_opt = param.get("filter")
-        if filter_opt is not None:
-            if not (
-                isinstance(filter_opt, dict)
-                and "type" in filter_opt
-                and "count" in filter_opt
-            ):
-                raise ValueError("'filter' parameter must be a dict with 'type' and 'count'")
+        if filter_opt is not None and not (
+            isinstance(filter_opt, dict)
+            and "type" in filter_opt
+            and "count" in filter_opt
+        ):
+            raise ValueError("'filter' parameter must be a dict with 'type' and 'count'")
 
         func = _SUPPORTED_FUNCS[key]
         buffer_size = param.get("buffer_size", 100)
@@ -142,23 +141,22 @@ class KeithleyDMM6500(VisaBasedInstrument, DMMBase):
 
         self.me_cmds.extend([
             f':TRACe:MAKE "MyBuffer", {self.buffer_size}',
-            f':TRACe:CLE "MyBuffer"',
+            ':TRACe:CLE "MyBuffer"',
             f":SENS:COUN {self.buffer_size}",
             ':TRACe:TRIG "MyBuffer"',
         ])
 
-    def configure(self, params: Optional[Dict] = None) -> None:
+    def configure(self, params: dict | None = None) -> None:
         """配置测量参数"""
         # 这里的 configure 是为了兼容性，实际配置在 read_xxx 中完成
-        pass
 
-    def read_voltage(self, params: Optional[Dict] = None) -> float:
+    def read_voltage(self, params: dict | None = None) -> float:
         """读取直流电压"""
         params = params or {}
         self._setup("voltage_dc", params)
         return self._measure("voltage_dc")
 
-    def read_current(self, params: Optional[Dict] = None) -> float:
+    def read_current(self, params: dict | None = None) -> float:
         """读取直流电流"""
         params = params or {}
         self._setup("current_dc", params)

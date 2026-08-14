@@ -1,7 +1,9 @@
 """仪器管理器：封装仪器发现、连接与生命周期管理"""
 
+from __future__ import annotations
+
 import logging
-from typing import Dict, List, Optional, Union
+import os
 
 from .device_table import DeviceTable
 from .instrument_types import InstrumentBase, InstrumentInfo
@@ -9,6 +11,10 @@ from .transport_backend import TransportBackend
 from .visa_backend import VisaTransportBackend
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_PERSISTENT_STORE = os.path.join(
+    os.path.expanduser("~"), ".insty", "known_devices.json"
+)
 
 
 class InstrumentManager:
@@ -21,6 +27,12 @@ class InstrumentManager:
     - 通过 ``register_backend()`` 注册更多后端
     - ``discover()`` 返回 ``List[InstrumentInfo]``，含仪器能力信息
 
+    设备信息按地址类型分两类存储：
+
+    - 运行时设备表（``device_table``）：串口（ASRL）等地址会漂移的设备
+    - 持久设备存储（``persistent_store``）：USB/TCPIP 等地址稳定唯一的设备，
+      默认 ``~/.insty/known_devices.json``（可用环境变量 ``INSTY_DEVICE_STORE`` 覆盖）
+
     Example:
         >>> mgr = InstrumentManager()
         >>> mgr.register_backend(SerialBackend())
@@ -32,17 +44,22 @@ class InstrumentManager:
 
     def __init__(
         self,
-        device_table: Optional[Union[str, "DeviceTable"]] = None,
-        backends: Optional[List[TransportBackend]] = None,
+        device_table: str | DeviceTable | None = None,
+        persistent_store: str | DeviceTable | None = None,
+        backends: list[TransportBackend] | None = None,
     ) -> None:
         """初始化仪器管理器
 
         Args:
-            device_table: 设备信息表。可以是：
+            device_table: 运行时设备信息表。可以是：
 
                 - ``str``: JSON 文件路径，自动加载
                 - ``DeviceTable``: 已有实例
                 - ``None``: 创建空的内存表（不读写文件）
+
+            persistent_store: 持久设备存储（USB/TCPIP 等地址稳定唯一的设备）。
+                可以是 ``str`` / ``DeviceTable``；为 ``None`` 时使用默认路径
+                ``~/.insty/known_devices.json``（环境变量 ``INSTY_DEVICE_STORE`` 可覆盖）
 
             backends: 传输后端列表，默认为 ``[VisaTransportBackend()]``
         """
@@ -53,14 +70,39 @@ class InstrumentManager:
         else:
             self._device_table = DeviceTable()
 
+        if isinstance(persistent_store, str):
+            self._persistent_store = DeviceTable(persistent_store)
+        elif isinstance(persistent_store, DeviceTable):
+            self._persistent_store = persistent_store
+        else:
+            self._persistent_store = DeviceTable(
+                os.environ.get("INSTY_DEVICE_STORE", _DEFAULT_PERSISTENT_STORE)
+            )
+
         if backends is None:
-            backends = [VisaTransportBackend(device_table=self._device_table)]
+            backends = [
+                VisaTransportBackend(
+                    device_table=self._device_table,
+                    persistent_store=self._persistent_store,
+                )
+            ]
 
-        self._backends: List[TransportBackend] = list(backends)
-        self._connections: Dict[str, InstrumentBase] = {}
-        self._connection_backend: Dict[str, TransportBackend] = {}
+        self._backends: list[TransportBackend] = list(backends)
+        # 后端未显式指定存储时，共享管理器的两张表
+        for backend in self._backends:
+            if backend._device_table is None:
+                backend._device_table = self._device_table
+            if backend._persistent_store is None:
+                backend._persistent_store = self._persistent_store
+        self._connections: dict[str, InstrumentBase] = {}
+        self._connection_backend: dict[str, TransportBackend] = {}
 
-    def save_device_table(self, path: Optional[str] = None) -> None:
+    @property
+    def persistent_store(self) -> DeviceTable:
+        """持久设备存储（USB/TCPIP 等地址稳定唯一的设备）"""
+        return self._persistent_store
+
+    def save_device_table(self, path: str | None = None) -> None:
         """持久化设备信息表
 
         Args:
@@ -71,7 +113,7 @@ class InstrumentManager:
         self._device_table.save()
 
     @property
-    def backends(self) -> List[TransportBackend]:
+    def backends(self) -> list[TransportBackend]:
         """当前已注册的所有后端"""
         return list(self._backends)
 
@@ -84,11 +126,12 @@ class InstrumentManager:
         self._backends.append(backend)
         logger.info(f"Registered backend: {backend.name}")
 
-    def resolve(self, address: str) -> Optional[InstrumentInfo]:
+    def resolve(self, address: str) -> InstrumentInfo | None:
         """解析仪器地址，返回仪器信息
 
-        优先查 DeviceTable 缓存，未命中时回退到实时 ``*IDN?`` 查询。
-        查询成功时自动写入缓存（按 label 去重）。
+        按地址类型查对应存储（USB/TCPIP → 持久存储，串口 → 运行时表），
+        未命中时回退到实时 ``*IDN?`` 查询；查询成功时自动写入对应存储
+        （按 label 去重）。
 
         Args:
             address: 仪器 VISA 地址
@@ -96,15 +139,27 @@ class InstrumentManager:
         Returns:
             InstrumentInfo，无法识别时返回 ``None``
         """
-        info = self._device_table.build_info(address)
-        if info is not None:
-            return info
+        # 地址类型判定以后端为准（默认 VisaTransportBackend：非 ASRL 前缀 → 持久存储）
+        if self._backends:
+            store = (
+                self._persistent_store
+                if self._backends[0]._allow_auto_identify(address)
+                else self._device_table
+            )
+            info = store.build_info(address)
+            if info is not None:
+                return info
 
         for backend in self._backends:
             try:
                 info = backend._identify(address)
                 if info is not None:
-                    self._device_table.set(
+                    store = (
+                        self._persistent_store
+                        if backend._allow_auto_identify(address)
+                        else self._device_table
+                    )
+                    store.set(
                         address,
                         info.label,
                         serial_baud=backend._serial_baud(address),
@@ -117,7 +172,7 @@ class InstrumentManager:
 
         return None
 
-    def discover(self) -> List[InstrumentInfo]:
+    def discover(self) -> list[InstrumentInfo]:
         """遍历所有后端，发现当前在线且身份已知的仪器（存在性检查）
 
         运行时默认路径，不做 `*IDN?`（除非后端允许自动识别，如 USB）。
@@ -127,14 +182,14 @@ class InstrumentManager:
             可用仪器列表，每个元素包含地址、标识、类别和支持能力。
             地址重复时，后面后端的发现结果覆盖前面的。
         """
-        seen: Dict[str, int] = {}
-        rc: List[InstrumentInfo] = []
+        seen: dict[str, int] = {}
+        rc: list[InstrumentInfo] = []
 
         for backend in self._backends:
             try:
-                logger.info(f"Discovering instruments...")
+                logger.info("Discovering instruments...")
                 found = backend.discover()
-                logger.info(f"Discovery complete.")
+                logger.info("Discovery complete.")
                 if found:
                     logger.info(
                         f"Discovered {len(found)} instrument(s)"
@@ -155,7 +210,7 @@ class InstrumentManager:
 
         return rc
 
-    def full_scan(self) -> List[InstrumentInfo]:
+    def full_scan(self) -> list[InstrumentInfo]:
         """显式全量识别所有枚举到的设备并写回设备表
 
         与 ``discover()`` 不同，本方法会对每个地址执行 ``*IDN?``
@@ -165,8 +220,8 @@ class InstrumentManager:
         Returns:
             识别出的仪器列表，地址重复时后面后端的扫描结果覆盖前面的。
         """
-        seen: Dict[str, int] = {}
-        rc: List[InstrumentInfo] = []
+        seen: dict[str, int] = {}
+        rc: list[InstrumentInfo] = []
 
         for backend in self._backends:
             try:
@@ -210,7 +265,7 @@ class InstrumentManager:
             logger.warning(f"Instrument {label}@{address} already opened")
             return self._connections[address]
 
-        last_ex: Optional[Exception] = None
+        last_ex: Exception | None = None
         for backend in self._backends:
             try:
                 inst = backend.open(address, label, timeout)

@@ -1,8 +1,8 @@
-# 频率计：AGILENT::53220A
+from __future__ import annotations
 
+# 频率计：AGILENT::53220A
 import logging
 import math
-from typing import Optional
 
 from pyvisa.resources import Resource
 
@@ -25,7 +25,7 @@ _MEAS_MAP = {
 class Agilent53220A(VisaBasedInstrument, FrequencyCounterBase):
     """Agilent 53220A 频率计驱动"""
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
         logger.debug(f"Initializing AGILENT::53220A with {resource}")
         self.channel = 1

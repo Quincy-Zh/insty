@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from pyvisa.resources import Resource
 
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 class VisaBasedInstrument:
     """基于 VISA 通信协议的仪器基类（混入类）"""
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         """初始化 VISA 仪器"""
         self.visa_inst = resource
 
@@ -43,7 +42,7 @@ class VisaBasedInstrument:
                 return False
         return True
 
-    def query(self, cmd: str) -> Optional[str]:
+    def query(self, cmd: str) -> str | None:
         """查询命令并返回响应"""
         try:
             resp = self.visa_inst.query(cmd).strip()  # type: ignore

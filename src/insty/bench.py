@@ -26,7 +26,6 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
-from typing import List, Optional
 
 from typing_extensions import Self
 
@@ -75,7 +74,7 @@ class _RoleBase:
     def close(self) -> None:
         try:
             self._inst.close()
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             logger.warning(f"Fail to close {self.label} @ {self.address}: {ex}")
 
     def __getattr__(self, name: str):
@@ -117,7 +116,7 @@ class ThermalChamberRole(_RoleBase):
         """设置目标温度"""
         self._inst.set_temperature(temp, soak)
 
-    def get_temperature(self) -> Optional[float]:
+    def get_temperature(self) -> float | None:
         """读取当前温度"""
         return self._inst.get_temperature()
 
@@ -134,7 +133,7 @@ class ThermalChamberRole(_RoleBase):
         """高低温设备是否就绪：Head 位置等状态"""
         return self._inst.ready()
 
-    def get_error(self) -> List[str]:
+    def get_error(self) -> list[str]:
         """获取错误信息列表"""
         return self._inst.get_error()
 
@@ -253,14 +252,19 @@ class TestBench:
         mngr.close()
     """
 
-    def __init__(self, device_table=None) -> None:
+    def __init__(self, device_table=None, persistent_store=None) -> None:
         """初始化测试台
 
         Args:
-            device_table: 设备表（JSON 路径 / DeviceTable / None）
+            device_table: 运行时设备表（JSON 路径 / DeviceTable / None），
+                承载串口（ASRL）等地址会漂移的设备
+            persistent_store: 持久设备存储（JSON 路径 / DeviceTable / None），
+                承载 USB/TCPIP 等地址稳定唯一的设备；None 时使用默认路径
             manager: 已构造的 InstrumentManager（测试注入用），与 device_table 二选一
         """
-        self._mgr = InstrumentManager(device_table=device_table)
+        self._mgr = InstrumentManager(
+            device_table=device_table, persistent_store=persistent_store
+        )
 
         # 在线仪器列表惰性发现：首次 get_* 时 discover，之后缓存；匹配失败自动刷新一次
         self._infos: list[InstrumentInfo] | None = None

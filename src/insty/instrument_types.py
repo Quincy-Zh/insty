@@ -9,7 +9,7 @@ from __future__ import annotations
 import enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar
 
 
 @dataclass(frozen=True)
@@ -18,11 +18,11 @@ class InstrumentInfo:
     address: str
     label: str
     inst_type: InstrumentType
-    supported: Tuple[str, ...] = ()
+    supported: tuple[str, ...] = ()
 
     def supports(
         self,
-        inst_type: Union["InstrumentType", str, Tuple["InstrumentType", ...]],
+        inst_type: InstrumentType | str | tuple[InstrumentType, ...],
         type_: str,
     ) -> bool:
         """判断是否支持指定类型的能力
@@ -36,7 +36,7 @@ class InstrumentInfo:
         types = inst_type if isinstance(inst_type, tuple) else (inst_type,)
         return self.inst_type in types and type_.upper() in self.supported
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "address": self.address,
             "label": self.label,
@@ -85,7 +85,6 @@ class PowerSupplyBase(InstrumentBase):
 
     def close(self) -> None:
         """关闭仪器连接，子类可重写"""
-        pass
 
 
 class ThermalChamberBase(InstrumentBase):
@@ -108,7 +107,7 @@ class ThermalChamberBase(InstrumentBase):
         raise NotImplementedError
 
     @abstractmethod
-    def get_temperature(self) -> Optional[float]:
+    def get_temperature(self) -> float | None:
         """读取当前温度"""
         raise NotImplementedError
 
@@ -163,15 +162,12 @@ class WaveformGeneratorBase(InstrumentBase):
 
     def set_frequency(self, freq: float) -> None:
         """设置频率（Hz），子类可重写"""
-        pass
 
     def set_amplitude(self, vpp: float) -> None:
         """设置幅值（Vpp），子类可重写"""
-        pass
 
     def set_offset(self, offset: float) -> None:
         """设置偏置（V），子类可重写"""
-        pass
 
     def close(self) -> None:
         pass
@@ -187,18 +183,17 @@ class DMMBase(InstrumentBase):
     """
 
     @abstractmethod
-    def read_voltage(self, params: Optional[Dict] = None) -> float:
+    def read_voltage(self, params: dict | None = None) -> float:
         """读取电压（直流）。params 可包含 range、power_line_cycles、filter 等"""
         raise NotImplementedError
 
     @abstractmethod
-    def read_current(self, params: Optional[Dict] = None) -> float:
+    def read_current(self, params: dict | None = None) -> float:
         """读取电流（直流）"""
         raise NotImplementedError
 
-    def configure(self, params: Optional[Dict] = None) -> None:
+    def configure(self, params: dict | None = None) -> None:
         """配置测量参数，子类可重写"""
-        pass
 
     def close(self) -> None:
         pass
@@ -294,14 +289,14 @@ _TypeBaseMap = {
 class InstrumentRegistry:
     """仪器注册表：按类型组织的驱动注册"""
 
-    _registry: dict[str, tuple[InstrumentType, tuple[str, ...], type]] = {}
+    _registry: ClassVar[dict[str, tuple[InstrumentType, tuple[str, ...], type]]] = {}
 
     @classmethod
     def register(
         cls,
         name: str,
         inst_type: InstrumentType,
-        supported: Tuple[str, ...],
+        supported: tuple[str, ...],
         driver_cls: type,
     ) -> None:
         key = name.upper()

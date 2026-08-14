@@ -1,7 +1,7 @@
-# 数字电源：ITECH::IT6302
+from __future__ import annotations
 
+# 数字电源：ITECH::IT6302
 import logging
-from typing import Optional
 
 from pyvisa.resources import Resource
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class ItechIT6302(VisaBasedInstrument, PowerSupplyBase):
     """ITECH IT6302 数字电源驱动"""
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
         logger.debug(f"Initializing Itech::IT6302 with {resource}")
         self.channel = 1
