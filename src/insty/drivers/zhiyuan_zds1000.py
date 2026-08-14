@@ -129,39 +129,43 @@ class ZDS1104(VisaBasedInstrument, OscilloscopeBase):
             logger.warning(f'Fail to exec "{mode}"')
 
     def read_image(self) -> bytes:
-        
-        self.visa_inst.timeout = 10 # type: ignore
+
+        # current timeout value, milliseconds
+        timeout_ = self.visa_inst.timeout  # type: ignore
+        self.visa_inst.timeout = 20000  # type: ignore
+
+        data_ = bytearray()
 
         try:
-            assert self.visa_inst is not None
             data = self.visa_inst.read_bytes(11)  # type: ignore
+            logger.debug(f"Image head: {data}")
+
             if data[:2] == b"#9":
                 sz = int(data[2:])
-                data_ = bytearray()
 
                 block_sz = 1024 * 1024
 
                 while sz > 0:
 
-                    logger.debug(f"Image data remaining {sz}-byte.")
-
                     if sz > block_sz:
                         s = block_sz
                     else:
                         s = sz
-                        
+
                     data = self.visa_inst.read_bytes(s)  # type: ignore
                     data_ += data
                     sz -= len(data)
 
                 self.visa_inst.read_bytes(1)  # type: ignore # 文件尾 '\n'(0x0A)
-                return bytes(data_)
             else:
                 logger.warning(f'Invalid resp: {data[:16].hex(" ")}')
         except Exception as ex:  # noqa: BLE001
             logger.warning(f"Fail to read image data: {ex}")
+            data_.clear()
 
-        return b""
+        self.visa_inst.timeout = timeout_  # type: ignore
+
+        return bytes(data_)
 
     def screenshot(self) -> bytes:
         """截屏，返回图片字节数据"""
