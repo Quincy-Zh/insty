@@ -42,7 +42,10 @@ class VisaTransportBackend(TransportBackend):
     def __init__(self, device_table: Optional[DeviceTable] = None) -> None:
         super().__init__(device_table)
         import pyvisa
-        self._rm = pyvisa.ResourceManager()
+        try:
+            self._rm = pyvisa.ResourceManager()
+        except pyvisa.VisaIOError:
+            self._rm = pyvisa.ResourceManager('@py')
         self._discovered_bauds: Dict[str, int] = {}
 
     def _enum(self) -> List[str]:
