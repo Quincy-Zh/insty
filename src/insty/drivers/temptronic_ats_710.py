@@ -109,9 +109,10 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamberBase):
         - 停止 cycling
         - Enter Ramp
         - 使能 DUT mode
+        - 设置气流流速 FLSE 15 SCFM
         - 启动 Flow
         """
-        if not self.run_cmds(["CYCL 0; RMPC 1; DUTM 1; FLOW 1"]):
+        if not self.run_cmds(["CYCL 0; RMPC 1; DUTM 1; FLSE 15; FLOW 1"]):
             raise RuntimeError("Failed to setup")
 
     def set_temperature(self, temp: float, soak: int = 15) -> None:
