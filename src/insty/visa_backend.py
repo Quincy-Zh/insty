@@ -46,15 +46,25 @@ class VisaTransportBackend(TransportBackend):
         persistent_store: DeviceTable | None = None,
     ) -> None:
         super().__init__(device_table, persistent_store)
-        import pyvisa
-        try:
-            self._rm = pyvisa.ResourceManager()
-        except pyvisa.VisaIOError:
-            self._rm = pyvisa.ResourceManager('@py')
+        self._rm: object | None = None
         self._discovered_bauds: dict[str, int] = {}
 
+    def _resource_manager(self):
+        """惰性创建 VISA ResourceManager：无默认后端时回退 pyvisa-py
+
+        构造后端不触发任何 VISA 初始化，避免无后端环境（如 CI 无
+        NI-VISA / pyvisa-py）下创建管理器即失败；真正执行 I/O 时才创建。
+        """
+        if self._rm is None:
+            import pyvisa
+            try:
+                self._rm = pyvisa.ResourceManager()
+            except Exception:
+                self._rm = pyvisa.ResourceManager('@py')
+        return self._rm
+
     def _enum(self) -> list[str]:
-        return list(self._rm.list_resources("?*"))
+        return list(self._resource_manager().list_resources("?*"))
 
     def _identify(self, addrress: str) -> InstrumentInfo | None:
         if addrress.startswith("ASRL"):
@@ -78,7 +88,7 @@ class VisaTransportBackend(TransportBackend):
         import pyvisa.constants
 
         try:
-            inst = self._rm.open_resource(addrress)
+            inst = self._resource_manager().open_resource(addrress)
             inst.timeout = 2000
             idn = inst.query("*IDN?").strip()
             inst.close()
@@ -120,7 +130,7 @@ class VisaTransportBackend(TransportBackend):
         import pyvisa.constants
 
         try:
-            inst = self._rm.open_resource(addrress)
+            inst = self._resource_manager().open_resource(addrress)
             inst.baud_rate = baud
             inst.timeout = 2000
 
@@ -169,7 +179,7 @@ class VisaTransportBackend(TransportBackend):
     def open(self, address: str, label: str, timeout: int = 30000) -> InstrumentBase:
         from .instrument_types import make_instrument
 
-        resource = self._rm.open_resource(address)
+        resource = self._resource_manager().open_resource(address)
         resource.timeout = timeout
 
         if address.startswith("ASRL") and self._device_table is not None:
@@ -182,6 +192,8 @@ class VisaTransportBackend(TransportBackend):
         return make_instrument(label, resource)
 
     def shutdown(self) -> None:
+        if self._rm is None:
+            return
         try:
             self._rm.close()
         except Exception as ex:

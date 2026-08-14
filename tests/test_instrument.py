@@ -520,6 +520,19 @@ def test_manager():
     mgr2.shutdown()
 
 
+def test_manager_without_visa_backend(monkeypatch):
+    """无任何 VISA 实现时（如 CI 无 NI-VISA / pyvisa-py），构造与 shutdown 不应失败"""
+    import pyvisa
+
+    def boom():
+        raise ValueError("Could not locate a VISA implementation")
+
+    monkeypatch.setattr(pyvisa, "ResourceManager", boom)
+    mgr = InstrumentManager()
+    assert mgr is not None
+    mgr.shutdown()
+
+
 def test_transport_backend():
     with pytest.raises(TypeError):
         TransportBackend()  # type: ignore
