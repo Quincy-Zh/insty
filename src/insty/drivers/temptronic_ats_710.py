@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import ClassVar
 
 from pyvisa.resources import Resource
 
@@ -58,7 +58,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamberBase):
         0: "at temperature",
     }
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
         logger.debug(f"Initializing TEMPTRONIC::ATS-710 with {resource}")
 
@@ -81,7 +81,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamberBase):
 
         return val
 
-    def _read_auxiliary_condition_register(self) -> Dict[int, str]:
+    def _read_auxiliary_condition_register(self) -> dict[int, str]:
         reg_val = self._read_register("AUXC?")
         logger.debug(f"AUXC: {reg_val:010b}.")
         rc = {}
@@ -94,7 +94,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamberBase):
 
         return rc
 
-    def _read_temperature_event_register(self) -> Dict[int, str]:
+    def _read_temperature_event_register(self) -> dict[int, str]:
         reg_val = self._read_register("TECR?")
         logger.debug(f"TECR: {reg_val:08b}.")
         rc = {}
@@ -132,7 +132,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamberBase):
         if not self.run_cmds([f"SETN {ch}; SOAK {soak}; SETN {ch}; SETP {temp:0.1f}"]):
             raise RuntimeError(f"Failed to set temperature to {temp} °C")
 
-    def get_temperature(self) -> Optional[float]:
+    def get_temperature(self) -> float | None:
         """读取当前温度"""
         resp = self.query("TEMP?")
         if resp:
@@ -172,7 +172,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamberBase):
         status = self._read_auxiliary_condition_register()
         return 2 in status  # bit2: head down
 
-    def get_error(self) -> List[str]:
+    def get_error(self) -> list[str]:
         rc = []
         reg_val = self._read_register("EROR?")
         logger.debug(f"EROR: {reg_val:016b}.")

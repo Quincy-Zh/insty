@@ -1,7 +1,7 @@
-# 信号发生器：AGILENT::33519
+from __future__ import annotations
 
+# 信号发生器：AGILENT::33519
 import logging
-from typing import Optional
 
 from pyvisa.resources import Resource
 
@@ -27,7 +27,7 @@ class Agilent33519(VisaBasedInstrument, WaveformGeneratorBase):
 
     Vmax = 20  # 输出最大电压值
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
         self.beep_ = False
         self.output_load = "INFinity"
@@ -63,7 +63,7 @@ class Agilent33519(VisaBasedInstrument, WaveformGeneratorBase):
         vpp, offset = self.cfg["vpp"], self.cfg["offset"]
         limit = self.Vmax - vpp / 2
         if abs(offset) >= limit:
-            raise ValueError(f"|offset| must be less than (Vmax - vpp/2)")
+            raise ValueError("|offset| must be less than (Vmax - vpp/2)")
 
         if hasattr(self, "channel"):
             cmd = f"OUTPut{self.channel}:LOAD {self.output_load}"

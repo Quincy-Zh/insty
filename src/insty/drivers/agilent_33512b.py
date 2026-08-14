@@ -1,7 +1,7 @@
-# 信号发生器：AGILENT::33512B
+from __future__ import annotations
 
+# 信号发生器：AGILENT::33512B
 import logging
-from typing import Optional
 
 from pyvisa.resources import Resource
 
@@ -25,7 +25,7 @@ _WAVE_MAP = {
 class Agilent33512B(VisaBasedInstrument, WaveformGeneratorBase):
     """Agilent 33512B 信号发生器驱动"""
 
-    def __init__(self, resource: Optional[Resource]) -> None:
+    def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
         logger.debug(f"Initializing AGILENT::33512B with {resource}")
         self.channel = 1
@@ -103,7 +103,7 @@ class Agilent33512B(VisaBasedInstrument, WaveformGeneratorBase):
 
     def output_disable(self) -> None:
         """关闭输出"""
-        self.run_cmds([f"OUTPut{self.channel} OFF", f"OUTPut2 OFF"])
+        self.run_cmds([f"OUTPut{self.channel} OFF", "OUTPut2 OFF"])
 
     def set_frequency(self, freq: float) -> None:
         self.run_cmds([f"SOURce{self.channel}:FREQuency {freq}"])

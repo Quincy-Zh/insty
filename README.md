@@ -13,7 +13,7 @@
 
 - 🎯 **角色化接口**：按仪器类型获取控制对象，语义清晰（`get_power_supply()`、`get_dmm()` 等）
 - 🔌 **厂商无关**：屏蔽 Keysight、R&S、Keithley、Tektronix 等不同品牌的驱动差异
-- 🚀 **惰性发现**：仪器按需连接，启动快速；支持全量扫描和手动刷新设备表
+- 🚀 **惰性发现**：仪器按需连接，启动快速；USB/TCPIP 设备信息自动持久化，即插即用；支持全量扫描和手动刷新设备表
 - 🔧 **可扩展**：支持自定义传输后端（默认使用 VISA）和注册新仪器驱动
 - 🐍 **Pythonic**：API 设计符合 Python 习惯，简洁直观
 
@@ -90,6 +90,20 @@ mngr.close()
 
 仪器在首次调用 `get_*` 方法时惰性发现。设备连接变化后可随时调用 `mngr.scan()` 进行全量识别，重建设备表。
 
+### 设备发现机制
+
+仪器信息按地址类型分两张表存储：
+
+| 地址类型 | 存储位置 | 说明 |
+| :--- | :--- | :--- |
+| USB / TCPIP | 持久存储（`persistent_store`） | 地址内嵌序列号、稳定唯一，IDN 固定不变，自动识别并持久化，跨项目即插即用 |
+| 串口（ASRL） | 运行时设备表（`device_table`） | 地址随 USB 插口漂移，不自动识别，需显式 `scan()`；波特率逐档试探并缓存 |
+
+- 持久存储默认位于 `~/.insty/known_devices.json`，可用环境变量 `INSTY_DEVICE_STORE` 覆盖；不依赖程序传入的 device_table
+- `discover()` 仅做存在性检查（不做 `*IDN?`），USB/TCPIP 表外设备例外（自动识别并写入持久存储）
+- 全量识别用 `scan()`：对每个地址执行 `*IDN?`（串口逐档波特率试探），结果按地址类型写入对应存储
+- 命令行重建设备表：`python -m insty.scan [device_table.json]`（缺省仅更新持久存储）
+
 ### 底层 API（InstrumentManager）
 
 如果需要更细粒度的控制，可以直接使用 `InstrumentManager`：
@@ -97,12 +111,18 @@ mngr.close()
 ```python
 from insty import InstrumentManager
 
-mgr = InstrumentManager(device_table=".device_table.json")
+mgr = InstrumentManager(
+    device_table=".device_table.json",      # 运行时设备表（串口设备）
+    persistent_store=None,                  # 持久存储（USB/TCPIP 设备），None 用默认路径
+)
 
 # 发现在线仪器（仅做存在性检查，不做 *IDN?）
 infos = mgr.discover()
 for info in infos:
     print(info.address, info.label, info.inst_type, info.supported)
+
+# 解析指定地址（表命中即用，否则实时 *IDN? 并写回对应存储）
+info = mgr.resolve("USB0::0x0957::0x2C07::MY12345678::0::INSTR")
 
 # 打开特定仪器
 inst = mgr.open(info.address, info.label)
@@ -115,7 +135,8 @@ mgr.close_all()
 ```
 
 **关键方法：**
-- `discover()` — 快速检查哪些地址在线
+- `discover()` — 快速检查哪些地址在线（USB/TCPIP 表外设备自动识别并持久化）
+- `resolve(address)` — 解析指定地址，未命中时实时 `*IDN?` 识别并写入对应存储
 - `full_scan()` — 对每个地址执行 `*IDN?`，串口设备还会逐档波特率试探，全量识别仪器类型
 - `register_backend()` — 注册更多传输后端（默认内置 `VisaTransportBackend`）
 

@@ -9,14 +9,16 @@
 测试报告与单位换算（``Report``）在 ``utils.report``，与仪器无关。
 """
 
+from __future__ import annotations
+
 import logging
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 # 导入即触发仪器模块的注册
-from . import visa_based_instrument
+from . import visa_based_instrument  # noqa: F401
 from .bench import (
     DMMRole,
     FrequencyCounterRole,
