@@ -22,7 +22,7 @@ import logging
 from abc import ABC, abstractmethod
 
 from .device_table import DeviceTable
-from .instrument_types import InstrumentBase, InstrumentInfo
+from .instrument_types import Instrument, InstrumentInfo
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +32,23 @@ class TransportBackend(ABC):
 
     def __init__(
         self,
-        device_table: DeviceTable | None = None,
-        persistent_store: DeviceTable | None = None,
+        device_table: str | None = None,
+        persistent_store: str | None = None,
     ) -> None:
         """初始化传输后端
 
         Args:
-            device_table: 运行时设备信息表（串口等地址会漂移的设备）
-            persistent_store: 持久设备存储（USB/TCPIP 等地址稳定唯一的设备）
+            device_table: 运行时设备信息表 JSON 文件路径（串口等地址会漂移的设备）。
+                为 ``None`` 时不持表（由 InstrumentManager 注入共享表）
+            persistent_store: 持久设备存储 JSON 文件路径（USB/TCPIP 等地址稳定唯一的设备）。
+                为 ``None`` 时不持表（由 InstrumentManager 注入共享表）
         """
-        self._device_table = device_table
-        self._persistent_store = persistent_store
+        self._device_table = (
+            DeviceTable(device_table) if isinstance(device_table, str) else None
+        )
+        self._persistent_store = (
+            DeviceTable(persistent_store) if isinstance(persistent_store, str) else None
+        )
 
     def _storage_for(self, address: str) -> DeviceTable | None:
         """按地址类型选择存储：稳定唯一（如 USB/TCPIP）→ 持久存储；其余 → 运行时表"""
@@ -77,7 +83,7 @@ class TransportBackend(ABC):
         """
 
     @abstractmethod
-    def open(self, address: str, label: str, timeout: int) -> InstrumentBase:
+    def open(self, address: str, label: str, timeout: int) -> Instrument:
         """打开仪器连接
 
         Args:
@@ -197,7 +203,7 @@ class TransportBackend(ABC):
 
         return rc
 
-    def close(self, inst: InstrumentBase) -> None:
+    def close(self, inst: Instrument) -> None:
         """关闭仪器连接
 
         Args:

@@ -8,7 +8,7 @@ import time
 from pyvisa.resources import Resource
 
 from ..instrument_types import (
-    DMMBase,
+    DMM,
     InstrumentRegistry,
 )
 from ..visa_based_instrument import VisaBasedInstrument
@@ -25,7 +25,7 @@ _SUPPORTED_FUNCS = {
 }
 
 
-class KeithleyDMM6500(VisaBasedInstrument, DMMBase):
+class KeithleyDMM6500(VisaBasedInstrument, DMM):
     """Keithley DMM6500 数字万用表驱动"""
 
     def __init__(self, resource: Resource | None) -> None:

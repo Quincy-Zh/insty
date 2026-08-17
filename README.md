@@ -7,11 +7,11 @@
 
 > Stop writing vendor-specific drivers. Just talk to your instruments.
 
-**Insty** 是一个基于 VISA 协议的 Python 库，为测试自动化提供**统一的仪器访问接口**。通过将仪器抽象为类型角色（数字电源、万用表、示波器等），你只需几行 Python 代码就能控制不同厂商的仪器，无需记忆各厂商差异化的驱动 API。
+**Insty** 是一个基于 VISA 协议的 Python 库，为测试自动化提供**统一的仪器访问接口**。通过将仪器抽象为类型基类（数字电源、万用表、示波器等），你只需几行 Python 代码就能控制不同厂商的仪器，无需记忆各厂商差异化的驱动 API。
 
 ## 特性
 
-- 🎯 **角色化接口**：按仪器类型获取控制对象，语义清晰（`get_power_supply()`、`get_dmm()` 等）
+- 🎯 **按类别访问**：按仪器类型获取控制对象，语义清晰（`get_power_supply()`、`get_dmm()` 等）
 - 🔌 **厂商无关**：屏蔽 Keysight、R&S、Keithley、Tektronix 等不同品牌的驱动差异
 - 🚀 **惰性发现**：仪器按需连接，启动快速；USB/TCPIP 设备信息自动持久化，即插即用；支持全量扫描和手动刷新设备表
 - 🔧 **可扩展**：支持自定义传输后端（默认使用 VISA）和注册新仪器驱动
@@ -44,9 +44,9 @@ print(rm.list_resources())  # 应列出所有可用的仪器地址
 
 ## 快速开始
 
-### 角色化接口（推荐）
+### 按类别访问（推荐）
 
-测试脚本通过 `InstrumentManager` 按「角色」获取仪器实例：
+测试脚本通过 `InstrumentManager` 按仪器类别获取实例：
 
 ```python
 from insty import InstrumentManager
@@ -55,8 +55,7 @@ mngr = InstrumentManager(device_table=".device_table.json")
 
 # 获取数字电源并设置电压
 ps = mngr.get_power_supply(address="USB0::0x0957::0x2C07::MY12345678::0::INSTR")
-ps.set_voltage(3.3)
-print(f"实际输出电压: {ps.measure_voltage():.3f} V")  # 实际输出电压: 3.301 V
+ps.set_voltage(3.3).output_enable()  # 支持链式调用
 
 # 获取高低温箱并设定温度
 thermal = mngr.get_thermal()
@@ -74,10 +73,10 @@ osc.execute("single")
 freq = osc.read_frequency()
 print(f"信号频率: {freq:.2f} Hz")  # 信号频率: 1000.00 Hz
 
-mngr.close()
+mngr.close_all()
 ```
 
-**可用角色接口：**
+**可用类别接口：**
 
 - `get_power_supply()` — 数字电源
 - `get_thermal()` — 高低温发生器
@@ -96,7 +95,7 @@ mngr.close()
 
 | 地址类型 | 存储位置 | 说明 |
 | :--- | :--- | :--- |
-| USB / TCPIP | 持久存储（`persistent_store`） | 地址内嵌序列号、稳定唯一，IDN 固定不变，自动识别并持久化，跨项目即插即用 |
+| USB / TCPIP | 持久存储 | 地址内嵌序列号、稳定唯一，IDN 固定不变，自动识别并持久化，跨项目即插即用 |
 | 串口（ASRL） | 运行时设备表（`device_table`） | 地址随 USB 插口漂移，不自动识别，需显式 `scan()`；波特率逐档试探并缓存 |
 
 - 持久存储默认位于 `~/.insty/known_devices.json`，可用环境变量 `INSTY_DEVICE_STORE` 覆盖；不依赖程序传入的 device_table
@@ -106,15 +105,12 @@ mngr.close()
 
 ### 细粒度控制（InstrumentManager）
 
-除角色化接口外，`InstrumentManager` 还提供地址级别的细粒度控制：
+除按类别的 `get_*` 接口外，`InstrumentManager` 还提供地址级别的细粒度控制：
 
 ```python
 from insty import InstrumentManager
 
-mgr = InstrumentManager(
-    device_table=".device_table.json",      # 运行时设备表（串口设备）
-    persistent_store=None,                  # 持久存储（USB/TCPIP 设备），None 用默认路径
-)
+mgr = InstrumentManager(device_table=".device_table.json")  # 运行时设备表（串口设备）
 
 # 发现在线仪器（仅做存在性检查，不做 *IDN?）
 infos = mgr.discover()
@@ -146,12 +142,12 @@ mgr.close_all()
 
 | 仪器类型 | 抽象基类 | 已适配仪器 |
 | :--- | :--- | :--- |
-| 数字电源 | `PowerSupplyBase` | ITECH::IT6302 |
-| 数字万用表 | `DMMBase` | KEITHLEY::DMM6500 |
-| 示波器 | `OscilloscopeBase` | ZHIYUAN::ZDS1000 |
-| 高低温发生器 | `ThermalChamberBase` | TEMPTRONIC::ATS710 |
-| 频率计数器 | `FrequencyCounterBase` | AGILENT::53220A |
-| 信号发生器 | `WaveformGeneratorBase` | AGILENT::33519, AGILENT::33519, AGILENT::33512B |
+| 数字电源 | `PowerSupply` | ITECH::IT6302 |
+| 数字万用表 | `DMM` | KEITHLEY::DMM6500 |
+| 示波器 | `Oscilloscope` | ZHIYUAN::ZDS1000 |
+| 高低温发生器 | `ThermalChamber` | TEMPTRONIC::ATS710 |
+| 频率计数器 | `FrequencyCounter` | AGILENT::53220A |
+| 信号发生器 | `WaveformGenerator` | AGILENT::33519, AGILENT::33519, AGILENT::33512B |
 
 > 只要仪器支持标准 SCPI 指令集，`Insty` 就能通过 `InstrumentRegistry` 快速适配。欢迎提交 PR 新增厂商驱动！
 
@@ -160,7 +156,7 @@ mgr.close_all()
 `Insty` 提供清晰的模块化导出：
 
 **面向用户的高层接口：**
-- `InstrumentManager` — 仪器管理器（发现、连接、生命周期管理、按类别的角色化接口 `get_power_supply()` / `get_dmm()` 等）
+- `InstrumentManager` — 仪器管理器（发现、连接、生命周期管理、按类别的访问接口 `get_power_supply()` / `get_dmm()` 等）
 
 **核心管理器：**
 - `InstrumentRegistry` — 驱动注册表，通过以下方法显式注册：
@@ -176,26 +172,25 @@ mgr.close_all()
 - `InstrumentInfo` — 已发现仪器信息（`address` / `label` / `inst_type` / `supported`）
 
 **抽象基类（自定义驱动时继承）：**
-- `PowerSupplyBase`
-- `ThermalChamberBase`
-- `WaveformGeneratorBase`
-- `DMMBase`
-- `OscilloscopeBase`
-- `FrequencyCounterBase`
+- `PowerSupply`
+- `ThermalChamber`
+- `WaveformGenerator`
+- `DMM`
+- `Oscilloscope`
+- `FrequencyCounter`
 
 **传输层：**
 - `TransportBackend` — 传输后端抽象基类
 - `VisaTransportBackend` — VISA 默认实现
 
 **工具函数：**
-- `frange(start, stop, step)` — 浮点等差数列（含端点）
 - `make_instrument(name, resource)` — 驱动工厂方法
 
 ## 贡献
 
 欢迎提交 Issue、Feature Request 或 Pull Request！
 
-- **新增仪器驱动**：继承对应的 `*Base` 类并注册到 `InstrumentRegistry`
+- **新增仪器驱动**：继承对应的抽象基类并注册到 `InstrumentRegistry`
 - **新增传输后端**：实现 `TransportBackend` 接口
 - **报告问题**：请在 Issue 中附上完整的错误堆栈和仪器型号
 

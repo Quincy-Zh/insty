@@ -15,8 +15,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 
 from .manager import InstrumentManager
+
+_DEFAULT_PERSISTENT_STORE = os.path.join(
+    os.path.expanduser("~"), ".insty", "known_devices.json"
+)
 
 
 def scan(path: str | None = None) -> int:
@@ -41,7 +46,8 @@ def scan(path: str | None = None) -> int:
 
     if path is not None:
         print(f"Runtime device table updated: {path}")
-    print(f"Persistent store updated: {mgr.persistent_store.path}")
+    store_path = os.environ.get("INSTY_DEVICE_STORE", _DEFAULT_PERSISTENT_STORE)
+    print(f"Persistent store updated: {store_path}")
     return len(infos)
 
 

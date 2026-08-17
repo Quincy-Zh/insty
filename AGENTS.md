@@ -14,13 +14,13 @@
 - 驱动在 import 时注册：insty/__init__.py → visa_based_instrument.py → drivers/__init__.py 级联导入各驱动，驱动末尾调用 InstrumentRegistry.register_*。新驱动必须加入 drivers/__init__.py 导入链，否则注册不生效。
 - label 格式 VENDOR::MODEL，由 VisaTransportBackend.format_idn() 解析 *IDN? 响应生成；注册表按 label 匹配（大小写不敏感）。
 - 设备信息分两张表，由 _allow_auto_identify(address)（非 ASRL 前缀 → True）兼作存储分派（TransportBackend._storage_for）：
-  - 持久存储（persistent_store，USB/TCPIP）：地址稳定唯一，discover 允许自动识别并写入；默认 ~/.insty/known_devices.json，环境变量 INSTY_DEVICE_STORE 可覆盖；不依赖程序传入的 device_table
+  - 持久存储（USB/TCPIP）：地址稳定唯一，discover 允许自动识别并写入；路径为环境变量 INSTY_DEVICE_STORE，缺省 ~/.insty/known_devices.json；不依赖程序传入的 device_table
   - 运行时表（device_table，串口 ASRL）：地址随 USB 插口漂移，不自动识别，须显式 scan；波特率按 _SERIAL_BAUD_RATES 逐档试探（有缓存波特率只试 1 次）
 - 发现分三层：
   1. discover()（TransportBackend 模板方法，无 *IDN? 存在性检查）：按地址类型查对应存储，未命中且允许自动识别才实时识别并写表。
   2. resolve()（InstrumentManager）：按地址类型查对应存储，未命中逐后端 _identify() 回退，识别结果写对应存储。
   3. full_scan()/scan()（用户显式触发）：对每个地址强制 *IDN?，结果按地址类型写对应存储。
-- InstrumentManager 构造：persistent_store 参数（str 路径 / DeviceTable / None）；传入的自定义 backends 若未显式持表，会共享管理器的两张表（manager.py 构造时注入）。
+- InstrumentManager 构造：device_table 参数为 str 路径（默认 None=空内存表）；后端列表不可注入，内置 VisaTransportBackend，其余用 register_backend() 追加（注册时注入共享的两张表）；持久存储无参数，一律走 INSTY_DEVICE_STORE 或默认路径。DeviceTable 为内部实现类，不对外导出。
 - DeviceTable.set() 的 label 去重（dedup_label=True）仅用于串口等地址漂移场景（运行时表）；USB/TCPIP 等稳定唯一地址由调用点显式传 dedup_label=False，同型号多台设备互不删除。
 
 ## 已知限制

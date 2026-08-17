@@ -82,7 +82,7 @@ pip install pytest ruff
 设备信息按地址类型分两张表：
 
 - **持久存储**（USB/TCPIP）：默认 `~/.insty/known_devices.json`，环境变量 `INSTY_DEVICE_STORE` 可覆盖
-- **运行时表**（串口 ASRL）：程序传入的 device_table（JSON 路径或 `DeviceTable` 实例）
+- **运行时表**（串口 ASRL）：程序传入的 device_table（JSON 路径，缺省为空内存表）
 
 重建设备表：
 
@@ -94,9 +94,9 @@ python -m insty.scan [device_table.json]   # 缺省仅更新持久存储
 
 这是对 `Insty` 最重要的贡献形式。请确保：
 
-1. **继承正确的基类**：例如新增数字电源驱动，继承 `PowerSupplyBase`。
+1. **继承正确的基类**：例如新增数字电源驱动，继承 `PowerSupply`。
 2. **在 `__init__` 中调用 `super().__init__`**。
-3. **实现所有抽象方法**（如 `set_voltage`、`measure_current`）。
+3. **实现所有抽象方法**（如 `set_voltage`、`read_current`）。
 4. **在 `InstrumentRegistry` 中注册你的驱动**，并提供厂商和型号匹配规则（例如通过 `*IDN?` 返回的字符串前缀）。
 5. **在 `drivers/__init__.py` 的导入链中加入新驱动模块**（导入即触发注册，漏加会导致注册不生效）。
 6. **在 `README.md` 的"支持的仪器"表格中**，添加你的厂商和型号作为示例。

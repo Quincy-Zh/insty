@@ -12,7 +12,7 @@ from pyvisa.resources import Resource
 
 from ..instrument_types import (
     InstrumentRegistry,
-    OscilloscopeBase,
+    Oscilloscope,
 )
 from ..visa_based_instrument import VisaBasedInstrument
 
@@ -26,7 +26,7 @@ _MEAS_MAP = {
 }
 
 
-class ZDS1104(VisaBasedInstrument, OscilloscopeBase):
+class ZDS1104(VisaBasedInstrument, Oscilloscope):
     """致远 ZDS1104 示波器驱动"""
 
     def __init__(self, resource: Resource | None) -> None:

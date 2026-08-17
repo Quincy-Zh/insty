@@ -7,7 +7,7 @@ import math
 from pyvisa.resources import Resource
 
 from ..instrument_types import (
-    FrequencyCounterBase,
+    FrequencyCounter,
     InstrumentRegistry,
 )
 from ..visa_based_instrument import VisaBasedInstrument
@@ -22,7 +22,7 @@ _MEAS_MAP = {
 }
 
 
-class Agilent53220A(VisaBasedInstrument, FrequencyCounterBase):
+class Agilent53220A(VisaBasedInstrument, FrequencyCounter):
     """Agilent 53220A 频率计驱动"""
 
     def __init__(self, resource: Resource | None) -> None:

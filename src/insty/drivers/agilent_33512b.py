@@ -7,7 +7,7 @@ from pyvisa.resources import Resource
 
 from ..instrument_types import (
     InstrumentRegistry,
-    WaveformGeneratorBase,
+    WaveformGenerator,
 )
 from ..visa_based_instrument import VisaBasedInstrument
 
@@ -22,7 +22,7 @@ _WAVE_MAP = {
 }
 
 
-class Agilent33512B(VisaBasedInstrument, WaveformGeneratorBase):
+class Agilent33512B(VisaBasedInstrument, WaveformGenerator):
     """Agilent 33512B 信号发生器驱动"""
 
     def __init__(self, resource: Resource | None) -> None:

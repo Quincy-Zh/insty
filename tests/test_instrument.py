@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 import tempfile
@@ -6,17 +6,44 @@ import tempfile
 import pytest
 
 from insty import (
-    DeviceTable,
-    InstrumentBase,
+    DMM,
+    Instrument,
     InstrumentInfo,
     InstrumentManager,
     InstrumentRegistry,
     InstrumentType,
+    Oscilloscope,
+    PowerSupply,
+    ThermalChamber,
     TransportBackend,
     VisaTransportBackend,
+    WaveformGenerator,
     make_instrument,
 )
+from insty.device_table import DeviceTable
 from insty.visa_based_instrument import VisaBasedInstrument
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persistent_store(tmp_path, monkeypatch):
+    """隔离持久存储：测试默认写入临时目录，避免污染用户 ~/.insty"""
+    monkeypatch.setenv("INSTY_DEVICE_STORE", str(tmp_path / "known_devices.json"))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_visa(monkeypatch):
+    """隔离真实 VISA 资源：ResourceManager 无资源且打开失败，避免测试接触真机
+
+    个别测试（如 scan 系列）会自行覆盖 pyvisa.ResourceManager。
+    """
+    from unittest.mock import MagicMock
+
+    import pyvisa
+
+    mock_rm = MagicMock()
+    mock_rm.list_resources.return_value = []
+    mock_rm.open_resource.side_effect = ValueError("No real VISA hardware")
+    monkeypatch.setattr(pyvisa, "ResourceManager", lambda: mock_rm)
 
 # ── 工具函数 ──────────────────────────────────────────────
 
@@ -46,18 +73,6 @@ def test_make_instances():
     assert reg is not None
     assert reg[0] == InstrumentType.DMM
     assert "VOLTAGE_DC" in reg[1]
-
-
-def test_methods_no_error():
-    a = make_instrument("AGILENT::33512B", None)
-    b = make_instrument("ITECH::IT6302", None)
-    c = make_instrument("TEMPTRONIC::ATS-710", None)
-    d = make_instrument("KEITHLEY::DMM6500", None)
-
-    assert a is not None
-    assert b is not None
-    assert c is not None
-    assert d is not None
 
 
 def test_oscilloscope_execute_mode():
@@ -99,7 +114,7 @@ def test_invalid():
 
 def test_base_instrument():
     with pytest.raises(TypeError):
-        InstrumentBase()  # type: ignore
+        Instrument()  # type: ignore
 
 
 def test_format_idn():
@@ -157,12 +172,12 @@ def test_instrument_info():
 
 
 def test_instrument_info_supports_with_enum():
-    info = make_info("addr", "VENDOR::M", InstrumentType.DMM,
-                     ("VOLTAGE_DC", "CURRENT_DC", "FREQUENCY|DUTY_CYCLE"))
+    info = make_info("addr", "VENDOR::M", InstrumentType.OSCILLOSCOPE,
+                     ("FREQUENCY", "FREQUENCY|DUTY_CYCLE"))
 
-    assert info.supports(InstrumentType.DMM, "VOLTAGE_DC") is True
-    assert info.supports(InstrumentType.DMM, "FREQUENCY|DUTY_CYCLE") is True
-    assert info.supports(InstrumentType.POWER_SUPPLY, "VOLTAGE_DC") is False
+    assert info.supports(InstrumentType.OSCILLOSCOPE, "FREQUENCY") is True
+    assert info.supports(InstrumentType.OSCILLOSCOPE, "FREQUENCY|DUTY_CYCLE") is True
+    assert info.supports(InstrumentType.POWER_SUPPLY, "FREQUENCY") is False
 
 
 def test_instrument_info_supports_with_str():
@@ -172,19 +187,6 @@ def test_instrument_info_supports_with_str():
     assert info.supports("dmm", "voltage_dc") is True
     assert info.supports("DMM", "VOLTAGE_DC") is True
     assert info.supports("power_supply", "current_dc") is False
-
-
-def test_instrument_info_supports_with_type_tuple():
-    info = make_info("addr", "VENDOR::M", InstrumentType.OSCILLOSCOPE,
-                     ("FREQUENCY", "DUTY_CYCLE"))
-
-    assert info.supports(
-        (InstrumentType.OSCILLOSCOPE, InstrumentType.FREQUENCY_COUNTER),
-        "FREQUENCY",
-    ) is True
-    assert info.supports(
-        (InstrumentType.OSCILLOSCOPE,), "PERIOD"
-    ) is False
 
 
 def test_instrument_info_frozen():
@@ -215,10 +217,9 @@ def test_vts_discover_returns_info(monkeypatch):
 
     tmp = tempfile.mkdtemp()
     tbl_path = os.path.join(tmp, ".device_table.json")
-    persist = DeviceTable(tbl_path)
-    persist.set("USB0::123::INSTR", "KEITHLEY::DMM6500", serial_baud=None)
+    DeviceTable(tbl_path).set("USB0::123::INSTR", "KEITHLEY::DMM6500", serial_baud=None)
 
-    backend = VisaTransportBackend(persistent_store=persist)
+    backend = VisaTransportBackend(persistent_store=tbl_path)
     result = backend.discover()
 
     assert len(result) == 1
@@ -257,7 +258,8 @@ def test_discover_presence_only_skips_unknown():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    mgr = InstrumentManager(backends=[Fake()])
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
     assert mgr.discover() == []
     mgr.shutdown()
 
@@ -274,9 +276,8 @@ def test_discover_respects_allow_auto_identify():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    mgr = InstrumentManager(
-        backends=[Fake()], persistent_store=DeviceTable()
-    )
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
     result = mgr.discover()
     assert len(result) == 1
     assert result[0].label == "VENDOR::X"
@@ -287,11 +288,10 @@ def test_full_scan_writes_device_table():
     """显式 scan 对每个地址执行 _identify 并写回设备表"""
     tmp = tempfile.mkdtemp()
     path = os.path.join(tmp, "table.json")
-    tbl = DeviceTable(path)
 
     class Fake(TransportBackend):
-        def __init__(self, table):
-            super().__init__(table)
+        def __init__(self, table_path):
+            super().__init__(table_path)
         def _enum(self) -> list[str]:
             return ["ASRL1::INSTR"]
         def _identify(self, address: str) -> InstrumentInfo | None:
@@ -299,11 +299,12 @@ def test_full_scan_writes_device_table():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    mgr = InstrumentManager(backends=[Fake(tbl)])
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake(path))
     result = mgr.full_scan()
     assert len(result) == 1
     assert result[0].label == "MOCK::SERIAL"
-    assert tbl.get("ASRL1::INSTR")["label"] == "MOCK::SERIAL"
+    assert DeviceTable(path).get("ASRL1::INSTR")["label"] == "MOCK::SERIAL"
     mgr.shutdown()
 
 
@@ -321,15 +322,12 @@ def test_discover_writes_persistent_store_for_stable_addr():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    runtime = DeviceTable()
-    persist = DeviceTable()
-    mgr = InstrumentManager(
-        device_table=runtime, persistent_store=persist, backends=[Fake()]
-    )
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
     result = mgr.discover()
     assert len(result) == 1
-    assert persist.get("USB0::dev::INSTR")["label"] == "VENDOR::X"
-    assert runtime.get("USB0::dev::INSTR") is None
+    assert mgr._persistent_store.get("USB0::dev::INSTR")["label"] == "VENDOR::X"
+    assert mgr._device_table.get("USB0::dev::INSTR") is None
     mgr.shutdown()
 
 
@@ -345,17 +343,14 @@ def test_scan_writes_persistent_store_for_stable_addr():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    runtime = DeviceTable()
-    persist = DeviceTable()
-    mgr = InstrumentManager(
-        device_table=runtime, persistent_store=persist, backends=[Fake()]
-    )
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
     result = mgr.full_scan()
     assert len(result) == 2
-    assert persist.get("USB0::dev::INSTR")["label"] == "VENDOR::X"
-    assert persist.get("ASRL1::INSTR") is None
-    assert runtime.get("ASRL1::INSTR")["label"] == "VENDOR::X"
-    assert runtime.get("USB0::dev::INSTR") is None
+    assert mgr._persistent_store.get("USB0::dev::INSTR")["label"] == "VENDOR::X"
+    assert mgr._persistent_store.get("ASRL1::INSTR") is None
+    assert mgr._device_table.get("ASRL1::INSTR")["label"] == "VENDOR::X"
+    assert mgr._device_table.get("USB0::dev::INSTR") is None
     mgr.shutdown()
 
 
@@ -371,14 +366,16 @@ def test_scan_keeps_same_label_devices_in_persistent_store():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    persist = DeviceTable()
-    persist.set("USB0::1::INSTR", "KEITHLEY::DMM6500", serial_baud=None)
+    DeviceTable(os.environ["INSTY_DEVICE_STORE"]).set(
+        "USB0::1::INSTR", "KEITHLEY::DMM6500", serial_baud=None
+    )
 
-    mgr = InstrumentManager(persistent_store=persist, backends=[Fake()])
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
     result = mgr.full_scan()
     assert len(result) == 2
-    assert persist.get("USB0::1::INSTR")["label"] == "KEITHLEY::DMM6500"
-    assert persist.get("USB0::2::INSTR")["label"] == "KEITHLEY::DMM6500"
+    assert mgr._persistent_store.get("USB0::1::INSTR")["label"] == "KEITHLEY::DMM6500"
+    assert mgr._persistent_store.get("USB0::2::INSTR")["label"] == "KEITHLEY::DMM6500"
     mgr.shutdown()
 
 
@@ -394,14 +391,13 @@ def test_scan_dedup_same_label_in_runtime_table():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    runtime = DeviceTable()
-    runtime.set("ASRL3::INSTR", "KEITHLEY::DMM6500", serial_baud=115200)
-
-    mgr = InstrumentManager(device_table=runtime, backends=[Fake()])
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
+    mgr._device_table.set("ASRL3::INSTR", "KEITHLEY::DMM6500", serial_baud=115200)
     result = mgr.full_scan()
     assert len(result) == 1
-    assert runtime.get("ASRL3::INSTR") is None
-    assert runtime.get("ASRL5::INSTR")["label"] == "KEITHLEY::DMM6500"
+    assert mgr._device_table.get("ASRL3::INSTR") is None
+    assert mgr._device_table.get("ASRL5::INSTR")["label"] == "KEITHLEY::DMM6500"
     mgr.shutdown()
 
 
@@ -417,17 +413,16 @@ def test_resolve_uses_persistent_store_for_usb():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    runtime = DeviceTable()
-    persist = DeviceTable()
-    persist.set("USB0::1::INSTR", "KEITHLEY::DMM6500", serial_baud=None)
-
-    mgr = InstrumentManager(
-        device_table=runtime, persistent_store=persist, backends=[Fake()]
+    DeviceTable(os.environ["INSTY_DEVICE_STORE"]).set(
+        "USB0::1::INSTR", "KEITHLEY::DMM6500", serial_baud=None
     )
+
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
     info = mgr.resolve("USB0::1::INSTR")
     assert info is not None
     assert info.label == "KEITHLEY::DMM6500"
-    assert runtime.get("USB0::1::INSTR") is None
+    assert mgr._device_table.get("USB0::1::INSTR") is None
     mgr.shutdown()
 
 
@@ -441,16 +436,13 @@ def test_resolve_serial_writes_runtime_table():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    runtime = DeviceTable()
-    persist = DeviceTable()
-    mgr = InstrumentManager(
-        device_table=runtime, persistent_store=persist, backends=[Fake()]
-    )
+    mgr = InstrumentManager()
+    mgr.register_backend(Fake())
     info = mgr.resolve("ASRL1::INSTR")
     assert info is not None
     assert info.label == "MOCK::SERIAL"
-    assert runtime.get("ASRL1::INSTR")["label"] == "MOCK::SERIAL"
-    assert persist.get("ASRL1::INSTR") is None
+    assert mgr._device_table.get("ASRL1::INSTR")["label"] == "MOCK::SERIAL"
+    assert mgr._persistent_store.get("ASRL1::INSTR") is None
     mgr.shutdown()
 
 
@@ -464,8 +456,7 @@ def test_manager_finds_usb_from_persistent_store(monkeypatch):
     mock_rm.list_resources.return_value = ["USB0::1::INSTR"]
     monkeypatch.setattr(pyvisa, "ResourceManager", lambda: mock_rm)
 
-    persist = DeviceTable()
-    persist.set(
+    DeviceTable(os.environ["INSTY_DEVICE_STORE"]).set(
         "USB0::1::INSTR",
         "KEITHLEY::DMM6500",
         serial_baud=None,
@@ -473,7 +464,7 @@ def test_manager_finds_usb_from_persistent_store(monkeypatch):
         supported=["VOLTAGE_DC"],
     )
 
-    mgr = InstrumentManager(persistent_store=persist)
+    mgr = InstrumentManager()
     infos = mgr.refresh()
     assert any(i.address == "USB0::1::INSTR" for i in infos)
     mgr.shutdown()
@@ -485,12 +476,12 @@ def test_default_persistent_store_path(monkeypatch):
     env_path = os.path.join(tmp, "store.json")
     monkeypatch.setenv("INSTY_DEVICE_STORE", env_path)
     mgr = InstrumentManager()
-    assert mgr.persistent_store.path == env_path
+    assert mgr._persistent_store.path == env_path
     mgr.shutdown()
 
     monkeypatch.delenv("INSTY_DEVICE_STORE")
     mgr2 = InstrumentManager()
-    assert mgr2.persistent_store.path == os.path.join(
+    assert mgr2._persistent_store.path == os.path.join(
         os.path.expanduser("~"), ".insty", "known_devices.json"
     )
     mgr2.shutdown()
@@ -556,14 +547,6 @@ def test_scan_with_arg_writes_runtime_table(monkeypatch):
 
 # ── Manager ────────────────────────────────────────────────
 
-def test_manager():
-    mgr = InstrumentManager()
-    assert mgr is not None
-    mgr.shutdown()
-    mgr2 = InstrumentManager()
-    mgr2.shutdown()
-
-
 def test_manager_without_visa_backend(monkeypatch):
     """无任何 VISA 实现时（如 CI 无 NI-VISA / pyvisa-py），构造与 shutdown 不应失败"""
     import pyvisa
@@ -591,7 +574,8 @@ def test_custom_backend():
         def open(self, address: str, label: str, timeout: int = 30000):
             raise RuntimeError("No hardware")
 
-    mgr = InstrumentManager(backends=[MockBackend()])
+    mgr = InstrumentManager()
+    mgr.register_backend(MockBackend())
     result = mgr.full_scan()
     assert len(result) == 1
     assert result[0].address == "COM3"
@@ -619,7 +603,9 @@ def test_multiple_backends():
         def open(self, address: str, label: str, timeout: int = 30000):
             raise RuntimeError("No hardware")
 
-    mgr = InstrumentManager(backends=[BackendA(), BackendB()])
+    mgr = InstrumentManager()
+    mgr.register_backend(BackendA())
+    mgr.register_backend(BackendB())
     result = mgr.full_scan()
 
     by_addr = {i.address: i for i in result}
@@ -642,7 +628,7 @@ def test_multiple_backends_with_connection():
             if address != "port_a":
                 raise RuntimeError(f"BackendA cannot open {address}")
             opened_by[address] = "A"
-            class FakeInst(InstrumentBase):
+            class FakeInst(Instrument):
                 def configure(self, *args, **kwargs): return 0
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
@@ -659,7 +645,7 @@ def test_multiple_backends_with_connection():
             if address != "port_b":
                 raise RuntimeError(f"BackendB cannot open {address}")
             opened_by[address] = "B"
-            class FakeInst(InstrumentBase):
+            class FakeInst(Instrument):
                 def configure(self, *args, **kwargs): return 0
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
@@ -667,7 +653,9 @@ def test_multiple_backends_with_connection():
                 def close(self): return 0
             return FakeInst()
 
-    mgr = InstrumentManager(backends=[BackendA(), BackendB()])
+    mgr = InstrumentManager()
+    mgr.register_backend(BackendA())
+    mgr.register_backend(BackendB())
 
     inst_a = mgr.open("port_a", "VENDOR::A")
     assert opened_by["port_a"] == "A"
@@ -690,11 +678,11 @@ def test_register_backend():
         def open(self, address: str, label: str, timeout: int = 30000):
             raise RuntimeError("No hardware")
 
-    mgr = InstrumentManager(backends=[])
-    assert len(mgr.backends) == 0
+    mgr = InstrumentManager()
+    assert len(mgr.backends) == 1
 
     mgr.register_backend(ExtraBackend())
-    assert len(mgr.backends) == 1
+    assert len(mgr.backends) == 2
 
     result = mgr.full_scan()
     assert result[0].inst_type == InstrumentType.DMM
@@ -718,7 +706,9 @@ def test_discover_overlap_address():
         def open(self, address, label, timeout=30000):
             raise RuntimeError("No hardware")
 
-    mgr = InstrumentManager(backends=[BackendA(), BackendB()])
+    mgr = InstrumentManager()
+    mgr.register_backend(BackendA())
+    mgr.register_backend(BackendB())
     result = mgr.full_scan()
     assert len(result) == 1
     assert result[0].label == "VENDOR::B"
@@ -741,7 +731,7 @@ def test_multiple_backends_fallback():
         def _identify(self, address: str) -> InstrumentInfo | None:
             return make_info("dev", "VENDOR::OK") if address == "dev" else None
         def open(self, address, label, timeout=30000):
-            class FakeInst(InstrumentBase):
+            class FakeInst(Instrument):
                 def configure(self, *args, **kwargs): return 0
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
@@ -749,26 +739,34 @@ def test_multiple_backends_fallback():
                 def close(self): return 0
             return FakeInst()
 
-    mgr = InstrumentManager(backends=[BadBackend(), GoodBackend()])
+    mgr = InstrumentManager()
+    mgr.register_backend(BadBackend())
+    mgr.register_backend(GoodBackend())
     inst = mgr.open("dev", "VENDOR::OK")
     assert inst is not None
     mgr.close("dev")
     mgr.shutdown()
 
 
-# ── 角色化接口（按类别访问，替代原 TestBench） ─────────────────
+# ── 按类别访问接口 ─────────────────────────────────────────
 
-def make_role_backend(infos):
+def make_mock_backend(infos):
     """构造按给定 InstrumentInfo 列表识别的 mock 后端，open 返回通用假仪器"""
-    class FakeInst:
-        def set_voltage(self, volt, channel=1): pass
-        def output_enable(self, channel=0): pass
-        def output_disable(self, channel=0): pass
+    class FakeInst(
+        DMM,
+        PowerSupply,
+        ThermalChamber,
+        WaveformGenerator,
+        Oscilloscope,
+    ):
+        def set_voltage(self, volt, channel=1): return self
+        def output_enable(self, channel=0): return self
+        def output_disable(self, channel=0): return self
         def read_voltage(self, params=None): return 3.3
         def read_current(self, params=None): return 0.1
-        def configure(self, *args, **kwargs): return None
+        def configure(self, *args, **kwargs): return self
         def get_status(self): return "RUN"
-        def execute(self, mode): pass
+        def execute(self, mode): return self
         def read_frequency(self, channel=1): return 1000.0
         def read_duty_cycle(self, channel=1): return 0.5
         def read_pulse(self, channel=1): return 0.01
@@ -776,11 +774,15 @@ def make_role_backend(infos):
         def screenshot(self): return b""
         def set_temperature(self, temp, soak=15): pass
         def get_temperature(self): return -40.0
+        def setup(self): return self
+        def wait(self, timeout=150): return True
+        def ready(self): return True
+        def get_error(self): return []
         def close(self): pass
 
-    class RoleBackend(TransportBackend):
+    class MockBackend(TransportBackend):
         def __init__(self, infos):
-            super().__init__(persistent_store=DeviceTable())
+            super().__init__()
             self._infos = infos
             self.opened = []
 
@@ -797,63 +799,60 @@ def make_role_backend(infos):
             self.opened.append(address)
             return FakeInst()
 
-    return RoleBackend(infos)
+    return MockBackend(infos)
 
 
-def test_get_dmm_role():
-    """get_dmm 按类别自动匹配，返回 DMMRole 并透传底层方法"""
-    from insty import DMMRole
-
+def test_get_dmm_by_category():
+    """get_dmm 按类别自动匹配，返回 DMM 实例并注入 info"""
     infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
                        InstrumentType.DMM, ("VOLTAGE_DC", "CURRENT_DC"))]
-    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    mgr = InstrumentManager()
+    mgr.register_backend(make_mock_backend(infos))
     try:
-        role = mgr.get_dmm()
-        assert isinstance(role, DMMRole)
-        assert role.address == "dmm_addr"
-        assert role.label == "KEITHLEY::DMM6500"
-        assert role.read_voltage() == 3.3
-        assert role.read_current() == 0.1
+        inst = mgr.get_dmm()
+        assert isinstance(inst, DMM)
+        assert inst.info.address == "dmm_addr"
+        assert inst.info.label == "KEITHLEY::DMM6500"
+        assert inst.read_voltage() == 3.3
+        assert inst.read_current() == 0.1
     finally:
         mgr.shutdown()
 
 
 def test_get_power_supply_chain():
-    """get_power_supply 返回 PowerSupplyRole，支持链式调用"""
-    from insty import PowerSupplyRole
-
+    """get_power_supply 返回 PowerSupply 实例，支持链式调用"""
     infos = [make_info("ps_addr", "ITECH::IT6302",
                        InstrumentType.POWER_SUPPLY, ("VOLTAGE",))]
-    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    mgr = InstrumentManager()
+    mgr.register_backend(make_mock_backend(infos))
     try:
         ps = mgr.get_power_supply()
-        assert isinstance(ps, PowerSupplyRole)
+        assert isinstance(ps, PowerSupply)
         assert ps.set_voltage(3.3).output_enable() is ps
     finally:
         mgr.shutdown()
 
 
-def test_get_role_with_address():
+def test_get_by_address():
     """指定 address 时按地址匹配并校验能力"""
-    from insty import DMMRole
-
     infos = [
         make_info("dmm_a", "KEITHLEY::DMM6500",
                   InstrumentType.DMM, ("VOLTAGE_DC",)),
         make_info("dmm_b", "AGILENT::34461A",
                   InstrumentType.DMM, ("VOLTAGE_DC",)),
     ]
-    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    mgr = InstrumentManager()
+    mgr.register_backend(make_mock_backend(infos))
     try:
-        role = mgr.get_dmm(address="dmm_b")
-        assert isinstance(role, DMMRole)
-        assert role.address == "dmm_b"
-        assert mgr.get_dmm(address="dmm_a").address == "dmm_a"
+        inst = mgr.get_dmm(address="dmm_b")
+        assert isinstance(inst, DMM)
+        assert inst.info.address == "dmm_b"
+        assert mgr.get_dmm(address="dmm_a").info.address == "dmm_a"
     finally:
         mgr.shutdown()
 
 
-def test_get_role_multiple_conflicts():
+def test_get_multiple_conflicts():
     """未指定 address 且存在多台同类别仪器时要求指定地址"""
     infos = [
         make_info("dmm_a", "KEITHLEY::DMM6500",
@@ -861,7 +860,8 @@ def test_get_role_multiple_conflicts():
         make_info("dmm_b", "AGILENT::34461A",
                   InstrumentType.DMM, ("VOLTAGE_DC",)),
     ]
-    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    mgr = InstrumentManager()
+    mgr.register_backend(make_mock_backend(infos))
     try:
         with pytest.raises(RuntimeError, match="找到多台"):
             mgr.get_dmm()
@@ -869,11 +869,12 @@ def test_get_role_multiple_conflicts():
         mgr.shutdown()
 
 
-def test_get_role_unsupported_address():
+def test_get_unsupported_address():
     """指定地址的仪器不支持所需能力时报错"""
     infos = [make_info("ps_addr", "ITECH::IT6302",
                        InstrumentType.POWER_SUPPLY, ("VOLTAGE",))]
-    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    mgr = InstrumentManager()
+    mgr.register_backend(make_mock_backend(infos))
     try:
         with pytest.raises(RuntimeError, match="不支持"):
             mgr.get_dmm(address="ps_addr")
@@ -881,11 +882,12 @@ def test_get_role_unsupported_address():
         mgr.shutdown()
 
 
-def test_get_role_no_match():
+def test_get_no_match():
     """在线列表无匹配仪器时自动重试一次后报错"""
     infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
                        InstrumentType.DMM, ("VOLTAGE_DC",))]
-    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    mgr = InstrumentManager()
+    mgr.register_backend(make_mock_backend(infos))
     try:
         with pytest.raises(RuntimeError, match="未找到可用"):
             mgr.get_power_supply()
@@ -893,32 +895,17 @@ def test_get_role_no_match():
         mgr.shutdown()
 
 
-def test_get_oscilloscope_frequency_counter_role():
-    """示波器可充当频率计角色，返回 FrequencyCounterRole"""
-    from insty import FrequencyCounterRole
-
-    infos = [make_info("osc_addr", "ZHIYUAN::ZDS1104",
-                       InstrumentType.OSCILLOSCOPE, ("FREQUENCY", "DUTY_CYCLE"))]
-    mgr = InstrumentManager(backends=[make_role_backend(infos)])
-    try:
-        fc = mgr.get_frequency_counter()
-        assert isinstance(fc, FrequencyCounterRole)
-        assert fc.read_frequency() == 1000.0
-        assert fc.read_duty_cycle() == 0.5
-    finally:
-        mgr.shutdown()
-
-
-def test_get_role_uses_open_connection_cache():
+def test_get_reuses_open_connection():
     """同一地址重复获取时复用管理器已打开的连接"""
     infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
                        InstrumentType.DMM, ("VOLTAGE_DC",))]
-    backend = make_role_backend(infos)
-    mgr = InstrumentManager(backends=[backend])
+    backend = make_mock_backend(infos)
+    mgr = InstrumentManager()
+    mgr.register_backend(backend)
     try:
         r1 = mgr.get_dmm()
         r2 = mgr.get_dmm()
-        assert r1.inst is r2.inst
+        assert r1 is r2
         assert backend.opened == ["dmm_addr"]
     finally:
         mgr.shutdown()
@@ -926,22 +913,22 @@ def test_get_role_uses_open_connection_cache():
 
 def test_manager_context_manager():
     """InstrumentManager 支持 with 语法，退出时自动关闭全部连接"""
-    from insty import DMMRole
-
     infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
                        InstrumentType.DMM, ("VOLTAGE_DC",))]
-    with InstrumentManager(backends=[make_role_backend(infos)]) as mgr:
-        role = mgr.get_dmm()
-        assert isinstance(role, DMMRole)
-        assert role.read_voltage() == 3.3
+    with InstrumentManager() as mgr:
+        mgr.register_backend(make_mock_backend(infos))
+        inst = mgr.get_dmm()
+        assert isinstance(inst, DMM)
+        assert inst.read_voltage() == 3.3
 
 
 def test_manager_refresh_and_full_scan_cache():
-    """refresh/full_scan 均更新角色匹配用的在线缓存"""
+    """refresh/full_scan 均更新按类别匹配用的在线缓存"""
     infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
                        InstrumentType.DMM, ("VOLTAGE_DC",))]
-    backend = make_role_backend(infos)
-    mgr = InstrumentManager(backends=[backend])
+    backend = make_mock_backend(infos)
+    mgr = InstrumentManager()
+    mgr.register_backend(backend)
     try:
         assert [i.address for i in mgr.refresh()] == ["dmm_addr"]
         assert mgr._infos is not None
@@ -949,10 +936,3 @@ def test_manager_refresh_and_full_scan_cache():
         assert mgr._infos is not None
     finally:
         mgr.shutdown()
-
-
-def test_frange():
-    from insty import frange
-    assert frange(0, 1, 0.25) == [0.0, 0.25, 0.5, 0.75, 1.0]
-    with pytest.raises(ValueError):
-        frange(0, 1, 0)

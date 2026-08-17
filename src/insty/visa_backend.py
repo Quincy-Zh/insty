@@ -9,8 +9,7 @@ from __future__ import annotations
 import logging
 import time
 
-from .device_table import DeviceTable
-from .instrument_types import InstrumentBase, InstrumentInfo
+from .instrument_types import Instrument, InstrumentInfo
 from .transport_backend import TransportBackend
 
 logger = logging.getLogger(__name__)
@@ -42,8 +41,8 @@ class VisaTransportBackend(TransportBackend):
 
     def __init__(
         self,
-        device_table: DeviceTable | None = None,
-        persistent_store: DeviceTable | None = None,
+        device_table: str | None = None,
+        persistent_store: str | None = None,
     ) -> None:
         super().__init__(device_table, persistent_store)
         self._rm: object | None = None
@@ -176,7 +175,7 @@ class VisaTransportBackend(TransportBackend):
 
     # ── 连接管理 ────────────────────────────────────────
 
-    def open(self, address: str, label: str, timeout: int = 30000) -> InstrumentBase:
+    def open(self, address: str, label: str, timeout: int = 30000) -> Instrument:
         from .instrument_types import make_instrument
 
         resource = self._resource_manager().open_resource(address)

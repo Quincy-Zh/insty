@@ -10,14 +10,14 @@ from pyvisa.resources import Resource
 
 from ..instrument_types import (
     InstrumentRegistry,
-    ThermalChamberBase,
+    ThermalChamber,
 )
 from ..visa_based_instrument import VisaBasedInstrument
 
 logger = logging.getLogger(__name__)
 
 
-class TemptronicATS710(VisaBasedInstrument, ThermalChamberBase):
+class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
     """TEMPTRONIC ATS-710 高低温发生器驱动"""
 
     SUPPORTED_ACTIONS: ClassVar = {

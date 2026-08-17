@@ -7,14 +7,14 @@ from pyvisa.resources import Resource
 
 from ..instrument_types import (
     InstrumentRegistry,
-    PowerSupplyBase,
+    PowerSupply,
 )
 from ..visa_based_instrument import VisaBasedInstrument
 
 logger = logging.getLogger(__name__)
 
 
-class ItechIT6302(VisaBasedInstrument, PowerSupplyBase):
+class ItechIT6302(VisaBasedInstrument, PowerSupply):
     """ITECH IT6302 数字电源驱动"""
 
     def __init__(self, resource: Resource | None) -> None:

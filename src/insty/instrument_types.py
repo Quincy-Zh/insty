@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from typing_extensions import Self
+
 
 @dataclass(frozen=True)
 class InstrumentInfo:
@@ -22,19 +24,18 @@ class InstrumentInfo:
 
     def supports(
         self,
-        inst_type: InstrumentType | str | tuple[InstrumentType, ...],
+        inst_type: InstrumentType | str,
         type_: str,
     ) -> bool:
         """判断是否支持指定类型的能力
 
         Args:
-            inst_type: 仪器类型（可为单个或元组，字符串按类型名解析）
+            inst_type: 仪器类型（字符串按类型名解析）
             type_: 能力名（如 "VOLTAGE_DC"）
         """
         if isinstance(inst_type, str):
             inst_type = InstrumentType(inst_type.lower())
-        types = inst_type if isinstance(inst_type, tuple) else (inst_type,)
-        return self.inst_type in types and type_.upper() in self.supported
+        return self.inst_type == inst_type and type_.upper() in self.supported
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,8 +51,12 @@ class InstrumentInfo:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class InstrumentBase(ABC):
+class Instrument(ABC):
     """仪器基类：所有驱动共用的生命周期接口"""
+
+    # 设备信息（地址/label/类型/能力），由 InstrumentManager 打开连接时注入；
+    # 驱动本身不感知，未通过管理器打开的实例该属性为 None
+    info: InstrumentInfo | None = None
 
     @abstractmethod
     def close(self) -> None:
@@ -59,27 +64,27 @@ class InstrumentBase(ABC):
         raise NotImplementedError
 
 
-class PowerSupplyBase(InstrumentBase):
+class PowerSupply(Instrument):
     """数字电源类型抽象基类
 
     支持接口：
-        set_voltage(volt: float, channel: int = 1) -> None
-        output_enable(channel: int = 0) -> None
-        output_disable(channel: int = 0) -> None
+        set_voltage(volt: float, channel: int = 1) -> Self
+        output_enable(channel: int = 0) -> Self
+        output_disable(channel: int = 0) -> Self
     """
 
     @abstractmethod
-    def set_voltage(self, volt: float, channel: int = 1) -> None:
-        """设置输出电压"""
+    def set_voltage(self, volt: float, channel: int = 1) -> Self:
+        """设置输出电压并自动使能输出，支持链式调用"""
         raise NotImplementedError
 
     @abstractmethod
-    def output_enable(self, channel: int = 0) -> None:
+    def output_enable(self, channel: int = 0) -> Self:
         """使能输出。channel=0 表示全部通道"""
         raise NotImplementedError
 
     @abstractmethod
-    def output_disable(self, channel: int = 0) -> None:
+    def output_disable(self, channel: int = 0) -> Self:
         """关闭输出。channel=0 表示全部通道"""
         raise NotImplementedError
 
@@ -87,13 +92,17 @@ class PowerSupplyBase(InstrumentBase):
         """关闭仪器连接，子类可重写"""
 
 
-class ThermalChamberBase(InstrumentBase):
+class ThermalChamber(Instrument):
     """高低温发生器类型抽象基类
 
     支持接口：
         set_temperature(temp: float, soak: int = 15) -> None
         wait(timeout: int = 150) -> bool
         get_temperature() -> Optional[float]
+        setup() -> Self
+        execute(action: str) -> Self
+        ready() -> bool
+        get_error() -> list[str]
     """
 
     @abstractmethod
@@ -114,28 +123,44 @@ class ThermalChamberBase(InstrumentBase):
     def get_status(self) -> bool:
         raise NotImplementedError
 
-    def prepare(self) -> ThermalChamberBase:
+    def prepare(self) -> Self:
         """开机检查与初始化配置，子类可重写"""
         return self
 
-    def reset(self)-> ThermalChamberBase:
+    def reset(self) -> Self:
         """重置，子类可重写"""
         return self
+
+    def setup(self) -> Self:
+        """初始化（如停止 cycling、使能 DUT mode），子类可重写"""
+        return self
+
+    def execute(self, action: str) -> Self:
+        """执行动作（如 head up / head down），子类可重写"""
+        return self
+
+    def ready(self) -> bool:
+        """设备是否就绪（如 Head 已下压到位），子类可重写"""
+        return False
+
+    def get_error(self) -> list[str]:
+        """获取错误信息列表，子类可重写"""
+        return []
 
     def close(self) -> None:
         pass
 
 
-class WaveformGeneratorBase(InstrumentBase):
+class WaveformGenerator(Instrument):
     """信号发生器类型抽象基类
 
     支持接口：
-        configure(wave: str, freq: float, vpp: float, offset: float, **kwargs) -> None
-        output_enable() -> None
-        output_disable() -> None
-        set_frequency(freq: float) -> None
-        set_amplitude(vpp: float) -> None
-        set_offset(offset: float) -> None
+        configure(wave: str, freq: float, vpp: float, offset: float, **kwargs) -> Self
+        output_enable() -> Self
+        output_disable() -> Self
+        set_frequency(freq: float) -> Self
+        set_amplitude(vpp: float) -> Self
+        set_offset(offset: float) -> Self
     """
 
     @abstractmethod
@@ -146,40 +171,43 @@ class WaveformGeneratorBase(InstrumentBase):
         vpp: float,
         offset: float,
         **kwargs,
-    ) -> None:
-        """配置波形及参数。wave: DC/SIN/SQU/RAMP/TRI"""
+    ) -> Self:
+        """配置波形及参数。wave: DC/SIN/SQU/RAMP/TRI，支持链式调用"""
         raise NotImplementedError
 
     @abstractmethod
-    def output_enable(self) -> None:
+    def output_enable(self) -> Self:
         """使能输出"""
         raise NotImplementedError
 
     @abstractmethod
-    def output_disable(self) -> None:
+    def output_disable(self) -> Self:
         """关闭输出"""
         raise NotImplementedError
 
-    def set_frequency(self, freq: float) -> None:
+    def set_frequency(self, freq: float) -> Self:
         """设置频率（Hz），子类可重写"""
+        return self
 
-    def set_amplitude(self, vpp: float) -> None:
+    def set_amplitude(self, vpp: float) -> Self:
         """设置幅值（Vpp），子类可重写"""
+        return self
 
-    def set_offset(self, offset: float) -> None:
+    def set_offset(self, offset: float) -> Self:
         """设置偏置（V），子类可重写"""
+        return self
 
     def close(self) -> None:
         pass
 
 
-class DMMBase(InstrumentBase):
+class DMM(Instrument):
     """数字万用表类型抽象基类
 
     支持接口：
         read_voltage(params: dict = None) -> float
         read_current(params: dict = None) -> float
-        configure(params: dict) -> None
+        configure(params: dict) -> Self
     """
 
     @abstractmethod
@@ -192,22 +220,24 @@ class DMMBase(InstrumentBase):
         """读取电流（直流）"""
         raise NotImplementedError
 
-    def configure(self, params: dict | None = None) -> None:
+    def configure(self, params: dict | None = None) -> Self:
         """配置测量参数，子类可重写"""
+        return self
 
     def close(self) -> None:
         pass
 
 
-class OscilloscopeBase(InstrumentBase):
+class Oscilloscope(Instrument):
     """示波器类型抽象基类
 
     支持接口：
         read_frequency() -> float
         read_duty_cycle() -> float
         read_pulse() -> float
-        execute(mode: str) -> None
+        execute(mode: str) -> Self
         screenshot() -> bytes
+        configure(**kw) -> Self
     """
 
     @abstractmethod
@@ -226,8 +256,8 @@ class OscilloscopeBase(InstrumentBase):
         raise NotImplementedError
 
     @abstractmethod
-    def execute(self, mode: str) -> None:
-        """切换运行模式：single/run/stop"""
+    def execute(self, mode: str) -> Self:
+        """切换运行模式：single/run/stop，支持链式调用"""
         raise NotImplementedError
 
     @abstractmethod
@@ -235,11 +265,15 @@ class OscilloscopeBase(InstrumentBase):
         """截屏，返回图片字节数据"""
         raise NotImplementedError
 
+    def configure(self, **kw) -> Self:
+        """透传底层配置（如 baudrate/signal/key），子类可重写"""
+        return self
+
     def close(self) -> None:
         pass
 
 
-class FrequencyCounterBase(InstrumentBase):
+class FrequencyCounter(Instrument):
     """频率计类型抽象基类
 
     支持接口：
@@ -276,13 +310,13 @@ class InstrumentType(enum.Enum):
     FREQUENCY_COUNTER = "frequency_counter"
 
 
-_TypeBaseMap = {
-    InstrumentType.POWER_SUPPLY: PowerSupplyBase,
-    InstrumentType.THERMAL_CHAMBER: ThermalChamberBase,
-    InstrumentType.WAVEFORM_GENERATOR: WaveformGeneratorBase,
-    InstrumentType.DMM: DMMBase,
-    InstrumentType.OSCILLOSCOPE: OscilloscopeBase,
-    InstrumentType.FREQUENCY_COUNTER: FrequencyCounterBase,
+_TypeMap = {
+    InstrumentType.POWER_SUPPLY: PowerSupply,
+    InstrumentType.THERMAL_CHAMBER: ThermalChamber,
+    InstrumentType.WAVEFORM_GENERATOR: WaveformGenerator,
+    InstrumentType.DMM: DMM,
+    InstrumentType.OSCILLOSCOPE: Oscilloscope,
+    InstrumentType.FREQUENCY_COUNTER: FrequencyCounter,
 }
 
 
@@ -377,7 +411,7 @@ class InstrumentRegistry:
         return res[0], res[1]
 
 
-def make_instrument(name: str, resource) -> PowerSupplyBase | ThermalChamberBase | WaveformGeneratorBase | DMMBase | OscilloscopeBase | FrequencyCounterBase:
+def make_instrument(name: str, resource) -> PowerSupply | ThermalChamber | WaveformGenerator | DMM | Oscilloscope | FrequencyCounter:
     """工厂函数：创建仪器实例"""
     driver_cls = InstrumentRegistry.get_driver(name)
     return driver_cls(resource)

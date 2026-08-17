@@ -7,7 +7,7 @@ from pyvisa.resources import Resource
 
 from ..instrument_types import (
     InstrumentRegistry,
-    WaveformGeneratorBase,
+    WaveformGenerator,
 )
 from ..visa_based_instrument import VisaBasedInstrument
 
@@ -22,7 +22,7 @@ _WAVE_MAP = {
 }
 
 
-class Agilent33519(VisaBasedInstrument, WaveformGeneratorBase):
+class Agilent33519(VisaBasedInstrument, WaveformGenerator):
     """Agilent 33519 系列信号发生器驱动基类"""
 
     Vmax = 20  # 输出最大电压值
