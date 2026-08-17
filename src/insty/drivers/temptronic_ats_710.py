@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import ClassVar
+from typing import ClassVar, Self
 
 from pyvisa.resources import Resource
 
@@ -104,7 +104,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
 
         return rc
 
-    def setup(self) -> None:
+    def setup(self) -> Self:
         """初始化:
         - 停止 cycling
         - Enter Ramp
@@ -112,8 +112,10 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
         - 设置气流流速 FLSE 15 SCFM
         - 启动 Flow
         """
-        if not self.run_cmds(["CYCL 0; RMPC 1; DUTM 1; FLSE 15; FLOW 1"]):
+        if not self.run_cmds(["RSTO", "DUTM 1", "FLSE 15"]):
             raise RuntimeError("Failed to setup")
+
+        return self
 
     def set_temperature(self, temp: float, soak: int = 15) -> None:
         """设置目标温度"""
@@ -142,14 +144,16 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
                 logger.error(f"Invalid temperature value received: {resp}")
         return None
 
-    def execute(self, action: str) -> None:
+    def execute(self, action: str) -> Self:
         """执行动作"""
         action_ = action.lower()
 
         if action_ not in self.SUPPORTED_ACTIONS:
-            logger.warning(f"Invalid {action}")
-        else:
-            self.run_cmds([self.SUPPORTED_ACTIONS[action_]])
+            logger.warning(f'Invalid action "{action}"')
+            raise ValueError(f'Invalid action "{action}"')
+
+        self.run_cmds([self.SUPPORTED_ACTIONS[action_]])
+        return self
 
     def wait(self, timeout: int = 150) -> bool:
         """等待温度稳定"""
@@ -170,7 +174,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
 
     def ready(self) -> bool:
         status = self._read_auxiliary_condition_register()
-        return 2 in status  # bit2: head down
+        return status.get(2, "") == "Head down"
 
     def get_error(self) -> list[str]:
         rc = []
