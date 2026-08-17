@@ -46,12 +46,12 @@ print(rm.list_resources())  # 应列出所有可用的仪器地址
 
 ### 角色化接口（推荐）
 
-测试脚本通过 `TestBench` 按「角色」获取仪器实例：
+测试脚本通过 `InstrumentManager` 按「角色」获取仪器实例：
 
 ```python
-from insty import TestBench
+from insty import InstrumentManager
 
-mngr = TestBench(device_table=".device_table.json")
+mngr = InstrumentManager(device_table=".device_table.json")
 
 # 获取数字电源并设置电压
 ps = mngr.get_power_supply(address="USB0::0x0957::0x2C07::MY12345678::0::INSTR")
@@ -88,7 +88,7 @@ mngr.close()
 
 不传 `address` 参数时，自动匹配唯一在线仪器；多台同类型仪器时会报错并提示使用 `address=` 指定。
 
-仪器在首次调用 `get_*` 方法时惰性发现。设备连接变化后可随时调用 `mngr.scan()` 进行全量识别，重建设备表。
+仪器在首次调用 `get_*` 方法时惰性发现。设备连接变化后可随时调用 `mngr.full_scan()` 进行全量识别，重建设备表。
 
 ### 设备发现机制
 
@@ -104,9 +104,9 @@ mngr.close()
 - 全量识别用 `scan()`：对每个地址执行 `*IDN?`（串口逐档波特率试探），结果按地址类型写入对应存储
 - 命令行重建设备表：`python -m insty.scan [device_table.json]`（缺省仅更新持久存储）
 
-### 底层 API（InstrumentManager）
+### 细粒度控制（InstrumentManager）
 
-如果需要更细粒度的控制，可以直接使用 `InstrumentManager`：
+除角色化接口外，`InstrumentManager` 还提供地址级别的细粒度控制：
 
 ```python
 from insty import InstrumentManager
@@ -160,10 +160,9 @@ mgr.close_all()
 `Insty` 提供清晰的模块化导出：
 
 **面向用户的高层接口：**
-- `TestBench` — 面向测试脚本的角色化接口（推荐入口）
+- `InstrumentManager` — 仪器管理器（发现、连接、生命周期管理、按类别的角色化接口 `get_power_supply()` / `get_dmm()` 等）
 
 **核心管理器：**
-- `InstrumentManager` — 仪器管理器（发现、连接、生命周期管理）
 - `InstrumentRegistry` — 驱动注册表，通过以下方法显式注册：
   - `register_power_supply()`
   - `register_thermal_chamber()`

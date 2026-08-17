@@ -21,7 +21,7 @@
   2. resolve()（InstrumentManager）：按地址类型查对应存储，未命中逐后端 _identify() 回退，识别结果写对应存储。
   3. full_scan()/scan()（用户显式触发）：对每个地址强制 *IDN?，结果按地址类型写对应存储。
 - InstrumentManager 构造：persistent_store 参数（str 路径 / DeviceTable / None）；传入的自定义 backends 若未显式持表，会共享管理器的两张表（manager.py 构造时注入）。
-- DeviceTable.set() 按 label 去重：同 label 不同地址的旧条目被删除（应对 USB 换口）。
+- DeviceTable.set() 的 label 去重（dedup_label=True）仅用于串口等地址漂移场景（运行时表）；USB/TCPIP 等稳定唯一地址由调用点显式传 dedup_label=False，同型号多台设备互不删除。
 
 ## 已知限制
 - 不做旧表兼容回退：运行时表里残留的 USB 条目不会被查询（用户明确选择）。

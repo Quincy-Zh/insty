@@ -149,6 +149,7 @@ class TransportBackend(ABC):
                         serial_baud=self._serial_baud(addr),
                         inst_type=info.inst_type.value,
                         supported=list(info.supported),
+                        dedup_label=not self._allow_auto_identify(addr),
                     )
 
             if info is not None:
@@ -187,6 +188,7 @@ class TransportBackend(ABC):
                         serial_baud=self._serial_baud(addr),
                         inst_type=info.inst_type.value,
                         supported=list(info.supported),
+                        dedup_label=not self._allow_auto_identify(addr),
                     )
                 logger.info(f"Scanned {addr} -> {info.label}")
                 rc.append(info)

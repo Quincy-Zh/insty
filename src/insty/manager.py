@@ -1,12 +1,25 @@
-"""仪器管理器：封装仪器发现、连接与生命周期管理"""
+"""仪器管理器：封装仪器发现、连接与生命周期管理，并提供按类别的角色化接口"""
 
 from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import time
+
+from typing_extensions import Self
 
 from .device_table import DeviceTable
 from .instrument_types import InstrumentBase, InstrumentInfo
+from .roles import (
+    _ROLES,
+    DMMRole,
+    FrequencyCounterRole,
+    OscilloscopeRole,
+    PowerSupplyRole,
+    ThermalChamberRole,
+    WaveformGeneratorRole,
+)
 from .transport_backend import TransportBackend
 from .visa_backend import VisaTransportBackend
 
@@ -17,15 +30,25 @@ _DEFAULT_PERSISTENT_STORE = os.path.join(
 )
 
 
+def frange(start, stop, step=1.0) -> list[float]:
+    """浮点等差数列（含端点），行为与 JSON 版 ``start~end,step`` 语法一致"""
+    if step == 0:
+        raise ValueError("step 不能为 0")
+    n = max(0, round((stop - start) / step) + 1)
+    return [round(start + i * step, 12) for i in range(n)]
+
+
 class InstrumentManager:
     """仪器管理器
 
-    负责发现已连接的仪器、建立连接、管理仪器实例的生命周期。
+    负责发现已连接的仪器、建立连接、管理仪器实例的生命周期，并按仪器类别
+    提供角色化访问接口（``get_power_supply()`` 等），无需关心具体地址与型号。
     支持同时注册多个 ``TransportBackend``，实现多协议仪器的统一管理。
 
     - 默认内置 ``VisaTransportBackend``
     - 通过 ``register_backend()`` 注册更多后端
     - ``discover()`` 返回 ``List[InstrumentInfo]``，含仪器能力信息
+    - ``get_dmm()`` 等角色接口按类别匹配并返回角色封装实例
 
     设备信息按地址类型分两类存储：
 
@@ -40,6 +63,9 @@ class InstrumentManager:
         >>> for info in info_list:
         ...     print(info.address, info.label, info.inst_type, info.supported)
         >>> inst = mgr.open("COM3", "MOCK::DEVICE")
+        >>> ps = mgr.get_power_supply()          # 按类别获取，无需地址/型号
+        >>> ps.set_voltage(3.3).output_enable()  # 角色封装支持链式调用
+        >>> mgr.close()
     """
 
     def __init__(
@@ -96,6 +122,9 @@ class InstrumentManager:
                 backend._persistent_store = self._persistent_store
         self._connections: dict[str, InstrumentBase] = {}
         self._connection_backend: dict[str, TransportBackend] = {}
+
+        # 在线仪器列表惰性发现：首次 get_* 时 discover，之后缓存；匹配失败自动刷新一次
+        self._infos: list[InstrumentInfo] | None = None
 
     @property
     def persistent_store(self) -> DeviceTable:
@@ -165,6 +194,7 @@ class InstrumentManager:
                         serial_baud=backend._serial_baud(address),
                         inst_type=info.inst_type.value,
                         supported=list(info.supported),
+                        dedup_label=not backend._allow_auto_identify(address),
                     )
                     return info
             except Exception:
@@ -243,6 +273,7 @@ class InstrumentManager:
             except Exception as ex:
                 logger.warning(f"[{backend.name}] scan failed: {ex}")
 
+        self._infos = list(rc)
         return rc
 
     def open(self, address: str, label: str, timeout: int = 30000) -> InstrumentBase:
@@ -316,3 +347,155 @@ class InstrumentManager:
                 logger.debug(f"[{backend.name}] Shutdown complete")
             except Exception as ex:
                 logger.warning(f"[{backend.name}] shutdown failed: {ex}")
+
+    # ── 角色化接口 ──────────────────────────────────────────────────
+
+    def refresh(self) -> list[InstrumentInfo]:
+        """重新发现当前在线的仪器并更新缓存, 存在性检查，不做 "*IDN?"
+
+        设备连接变化（尤其串口换口）后请调用 :meth:`full_scan` 重建设备表。
+        """
+        self._infos = self.discover()
+        return list(self._infos)
+
+    def _ensure_infos(self) -> None:
+        """确保在线仪器列表已发现（惰性）"""
+        if self._infos is None:
+            self._infos = self.discover()
+
+    def _find_info(
+        self, role: str, address: str | None, _retried: bool = False
+    ) -> InstrumentInfo:
+        inst_type, capability, _ = _ROLES[role]
+        self._ensure_infos()
+
+        if address:
+            for info in self._infos:
+                if info.address == address:
+                    if not info.supports(inst_type, capability):
+                        raise RuntimeError(
+                            f'{info.label}[{address}] 不支持 "{capability}"'
+                        )
+                    return info
+            # 地址不在当前在线列表：自动重新发现一次再匹配
+            if not _retried:
+                self.refresh()
+                return self._find_info(role, address, _retried=True)
+            raise RuntimeError(f'仪器地址不存在或未连接: "{address}"')
+
+        candidates = [
+            info for info in self._infos if info.supports(inst_type, capability)
+        ]
+        if not candidates:
+            # 当前在线列表无匹配仪器：自动重新发现一次再匹配
+            if not _retried:
+                self.refresh()
+                return self._find_info(role, address, _retried=True)
+            raise RuntimeError(f'未找到可用 "{capability}" 的仪器（{role}）')
+        if len(candidates) > 1:
+            raise RuntimeError(
+                f'找到多台 "{capability}" 仪器，请通过 address 参数指定: '
+                + ", ".join(c.address for c in candidates)
+            )
+        return candidates[0]
+
+    def _open_role(self, role: str, address: str | None, timeout: int = 30000):
+        info = self._find_info(role, address)
+        inst = self.open(info.address, info.label, timeout=timeout)
+        _, _, role_class = _ROLES[role]
+        return role_class(inst, info)
+
+    # ── 角色获取 ────────────────────────────────────────────────────
+
+    def get_power_supply(
+        self, address: str | None = None, timeout: int = 30000
+    ) -> PowerSupplyRole:
+        """获取数字电源实例
+
+        Args:
+            address: 仪器地址；为 ``None`` 时自动匹配唯一在线实例，
+                存在多台同类仪器时报错要求指定
+            timeout: 连接超时（毫秒）
+        """
+        return self._open_role("power_supply", address, timeout)
+
+    def get_thermal(
+        self, address: str | None = None, timeout: int = 30000
+    ) -> ThermalChamberRole:
+        """获取高低温发生器实例，并完成开机检查与 DUT 模式配置
+
+        Args:
+            address: 仪器地址；为 ``None`` 时自动匹配唯一在线实例
+            timeout: 连接超时（毫秒）
+        """
+        return self._open_role("thermal", address, timeout)
+
+    def get_dmm(
+        self, address: str | None = None, timeout: int = 30000
+    ) -> DMMRole:
+        """获取数字万用表实例
+
+        Args:
+            address: 仪器地址；为 ``None`` 时自动匹配唯一在线实例
+            timeout: 连接超时（毫秒）
+        """
+        return self._open_role("dmm", address, timeout)
+
+    def get_waveform_generator(
+        self, address: str | None = None, timeout: int = 30000
+    ) -> WaveformGeneratorRole:
+        """获取波形发生器实例
+
+        Args:
+            address: 仪器地址；为 ``None`` 时自动匹配唯一在线实例
+            timeout: 连接超时（毫秒）
+        """
+        return self._open_role("waveform_generator", address, timeout)
+
+    def get_oscilloscope(
+        self, address: str | None = None, timeout: int = 30000
+    ) -> OscilloscopeRole:
+        """获取示波器实例
+
+        Args:
+            address: 仪器地址；为 ``None`` 时自动匹配唯一在线实例
+            timeout: 连接超时（毫秒）
+        """
+        return self._open_role("oscilloscope", address, timeout)
+
+    def get_frequency_counter(
+        self, address: str | None = None, timeout: int = 30000
+    ) -> FrequencyCounterRole:
+        """获取频率计实例
+
+        Args:
+            address: 仪器地址；为 ``None`` 时自动匹配唯一在线实例
+            timeout: 连接超时（毫秒）
+        """
+        return self._open_role("frequency_counter", address, timeout)
+
+    # ── 工具方法 ────────────────────────────────────────────────────
+
+    @staticmethod
+    def hold(seconds: float) -> None:
+        """保持当前状态等待指定时间"""
+        time.sleep(seconds)
+
+    def run_cmd(self, args, check: bool = True, timeout: float | None = None) -> bool:
+        """执行外部命令（如 DUT 串口命令）"""
+        cmd = [str(a) for a in args]
+        logger.info(f'Run: {" ".join(cmd)}')
+        try:
+            subprocess.run(cmd, shell=False, check=True, timeout=timeout)
+            return True
+        except subprocess.CalledProcessError as ex:
+            logger.error(f"命令执行失败: {ex}")
+            if check:
+                raise RuntimeError(f"命令执行失败: {ex}") from ex
+            return False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.shutdown()

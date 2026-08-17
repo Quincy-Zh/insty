@@ -359,6 +359,52 @@ def test_scan_writes_persistent_store_for_stable_addr():
     mgr.shutdown()
 
 
+def test_scan_keeps_same_label_devices_in_persistent_store():
+    """持久存储（USB/TCPIP）：同 label 不同地址的多台设备互不删除（历史条目保留）"""
+    class Fake(TransportBackend):
+        def _enum(self) -> list[str]:
+            return ["USB0::1::INSTR", "USB0::2::INSTR"]
+        def _identify(self, address: str) -> InstrumentInfo | None:
+            return make_info(address, "KEITHLEY::DMM6500")
+        def _allow_auto_identify(self, address: str) -> bool:
+            return not address.startswith("ASRL")
+        def open(self, address, label, timeout=30000):
+            raise RuntimeError("No hardware")
+
+    persist = DeviceTable()
+    persist.set("USB0::1::INSTR", "KEITHLEY::DMM6500", serial_baud=None)
+
+    mgr = InstrumentManager(persistent_store=persist, backends=[Fake()])
+    result = mgr.full_scan()
+    assert len(result) == 2
+    assert persist.get("USB0::1::INSTR")["label"] == "KEITHLEY::DMM6500"
+    assert persist.get("USB0::2::INSTR")["label"] == "KEITHLEY::DMM6500"
+    mgr.shutdown()
+
+
+def test_scan_dedup_same_label_in_runtime_table():
+    """运行时表（串口）：同 label 换口仍清除旧地址条目"""
+    class Fake(TransportBackend):
+        def _enum(self) -> list[str]:
+            return ["ASRL5::INSTR"]
+        def _identify(self, address: str) -> InstrumentInfo | None:
+            return make_info(address, "KEITHLEY::DMM6500")
+        def _allow_auto_identify(self, address: str) -> bool:
+            return not address.startswith("ASRL")
+        def open(self, address, label, timeout=30000):
+            raise RuntimeError("No hardware")
+
+    runtime = DeviceTable()
+    runtime.set("ASRL3::INSTR", "KEITHLEY::DMM6500", serial_baud=115200)
+
+    mgr = InstrumentManager(device_table=runtime, backends=[Fake()])
+    result = mgr.full_scan()
+    assert len(result) == 1
+    assert runtime.get("ASRL3::INSTR") is None
+    assert runtime.get("ASRL5::INSTR")["label"] == "KEITHLEY::DMM6500"
+    mgr.shutdown()
+
+
 def test_resolve_uses_persistent_store_for_usb():
     """resolve 对稳定唯一地址从持久存储解析，不查运行时表"""
     class Fake(TransportBackend):
@@ -408,13 +454,11 @@ def test_resolve_serial_writes_runtime_table():
     mgr.shutdown()
 
 
-def test_bench_finds_usb_from_persistent_store(monkeypatch):
-    """TestBench 不带 device_table 时，也能从持久存储发现 USB 设备"""
+def test_manager_finds_usb_from_persistent_store(monkeypatch):
+    """InstrumentManager 不带 device_table 时，也能从持久存储发现 USB 设备"""
     from unittest.mock import MagicMock
 
     import pyvisa
-
-    from insty import TestBench
 
     mock_rm = MagicMock()
     mock_rm.list_resources.return_value = ["USB0::1::INSTR"]
@@ -429,10 +473,10 @@ def test_bench_finds_usb_from_persistent_store(monkeypatch):
         supported=["VOLTAGE_DC"],
     )
 
-    bench = TestBench(persistent_store=persist)
-    infos = bench.refresh()
+    mgr = InstrumentManager(persistent_store=persist)
+    infos = mgr.refresh()
     assert any(i.address == "USB0::1::INSTR" for i in infos)
-    bench.close()
+    mgr.shutdown()
 
 
 def test_default_persistent_store_path(monkeypatch):
@@ -710,3 +754,205 @@ def test_multiple_backends_fallback():
     assert inst is not None
     mgr.close("dev")
     mgr.shutdown()
+
+
+# ── 角色化接口（按类别访问，替代原 TestBench） ─────────────────
+
+def make_role_backend(infos):
+    """构造按给定 InstrumentInfo 列表识别的 mock 后端，open 返回通用假仪器"""
+    class FakeInst:
+        def set_voltage(self, volt, channel=1): pass
+        def output_enable(self, channel=0): pass
+        def output_disable(self, channel=0): pass
+        def read_voltage(self, params=None): return 3.3
+        def read_current(self, params=None): return 0.1
+        def configure(self, *args, **kwargs): return None
+        def get_status(self): return "RUN"
+        def execute(self, mode): pass
+        def read_frequency(self, channel=1): return 1000.0
+        def read_duty_cycle(self, channel=1): return 0.5
+        def read_pulse(self, channel=1): return 0.01
+        def read_image(self): return b""
+        def screenshot(self): return b""
+        def set_temperature(self, temp, soak=15): pass
+        def get_temperature(self): return -40.0
+        def close(self): pass
+
+    class RoleBackend(TransportBackend):
+        def __init__(self, infos):
+            super().__init__(persistent_store=DeviceTable())
+            self._infos = infos
+            self.opened = []
+
+        def _enum(self):
+            return [i.address for i in self._infos]
+
+        def _identify(self, address):
+            return next((i for i in self._infos if i.address == address), None)
+
+        def _allow_auto_identify(self, address):
+            return True
+
+        def open(self, address, label, timeout=30000):
+            self.opened.append(address)
+            return FakeInst()
+
+    return RoleBackend(infos)
+
+
+def test_get_dmm_role():
+    """get_dmm 按类别自动匹配，返回 DMMRole 并透传底层方法"""
+    from insty import DMMRole
+
+    infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
+                       InstrumentType.DMM, ("VOLTAGE_DC", "CURRENT_DC"))]
+    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    try:
+        role = mgr.get_dmm()
+        assert isinstance(role, DMMRole)
+        assert role.address == "dmm_addr"
+        assert role.label == "KEITHLEY::DMM6500"
+        assert role.read_voltage() == 3.3
+        assert role.read_current() == 0.1
+    finally:
+        mgr.shutdown()
+
+
+def test_get_power_supply_chain():
+    """get_power_supply 返回 PowerSupplyRole，支持链式调用"""
+    from insty import PowerSupplyRole
+
+    infos = [make_info("ps_addr", "ITECH::IT6302",
+                       InstrumentType.POWER_SUPPLY, ("VOLTAGE",))]
+    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    try:
+        ps = mgr.get_power_supply()
+        assert isinstance(ps, PowerSupplyRole)
+        assert ps.set_voltage(3.3).output_enable() is ps
+    finally:
+        mgr.shutdown()
+
+
+def test_get_role_with_address():
+    """指定 address 时按地址匹配并校验能力"""
+    from insty import DMMRole
+
+    infos = [
+        make_info("dmm_a", "KEITHLEY::DMM6500",
+                  InstrumentType.DMM, ("VOLTAGE_DC",)),
+        make_info("dmm_b", "AGILENT::34461A",
+                  InstrumentType.DMM, ("VOLTAGE_DC",)),
+    ]
+    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    try:
+        role = mgr.get_dmm(address="dmm_b")
+        assert isinstance(role, DMMRole)
+        assert role.address == "dmm_b"
+        assert mgr.get_dmm(address="dmm_a").address == "dmm_a"
+    finally:
+        mgr.shutdown()
+
+
+def test_get_role_multiple_conflicts():
+    """未指定 address 且存在多台同类别仪器时要求指定地址"""
+    infos = [
+        make_info("dmm_a", "KEITHLEY::DMM6500",
+                  InstrumentType.DMM, ("VOLTAGE_DC",)),
+        make_info("dmm_b", "AGILENT::34461A",
+                  InstrumentType.DMM, ("VOLTAGE_DC",)),
+    ]
+    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    try:
+        with pytest.raises(RuntimeError, match="找到多台"):
+            mgr.get_dmm()
+    finally:
+        mgr.shutdown()
+
+
+def test_get_role_unsupported_address():
+    """指定地址的仪器不支持所需能力时报错"""
+    infos = [make_info("ps_addr", "ITECH::IT6302",
+                       InstrumentType.POWER_SUPPLY, ("VOLTAGE",))]
+    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    try:
+        with pytest.raises(RuntimeError, match="不支持"):
+            mgr.get_dmm(address="ps_addr")
+    finally:
+        mgr.shutdown()
+
+
+def test_get_role_no_match():
+    """在线列表无匹配仪器时自动重试一次后报错"""
+    infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
+                       InstrumentType.DMM, ("VOLTAGE_DC",))]
+    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    try:
+        with pytest.raises(RuntimeError, match="未找到可用"):
+            mgr.get_power_supply()
+    finally:
+        mgr.shutdown()
+
+
+def test_get_oscilloscope_frequency_counter_role():
+    """示波器可充当频率计角色，返回 FrequencyCounterRole"""
+    from insty import FrequencyCounterRole
+
+    infos = [make_info("osc_addr", "ZHIYUAN::ZDS1104",
+                       InstrumentType.OSCILLOSCOPE, ("FREQUENCY", "DUTY_CYCLE"))]
+    mgr = InstrumentManager(backends=[make_role_backend(infos)])
+    try:
+        fc = mgr.get_frequency_counter()
+        assert isinstance(fc, FrequencyCounterRole)
+        assert fc.read_frequency() == 1000.0
+        assert fc.read_duty_cycle() == 0.5
+    finally:
+        mgr.shutdown()
+
+
+def test_get_role_uses_open_connection_cache():
+    """同一地址重复获取时复用管理器已打开的连接"""
+    infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
+                       InstrumentType.DMM, ("VOLTAGE_DC",))]
+    backend = make_role_backend(infos)
+    mgr = InstrumentManager(backends=[backend])
+    try:
+        r1 = mgr.get_dmm()
+        r2 = mgr.get_dmm()
+        assert r1.inst is r2.inst
+        assert backend.opened == ["dmm_addr"]
+    finally:
+        mgr.shutdown()
+
+
+def test_manager_context_manager():
+    """InstrumentManager 支持 with 语法，退出时自动关闭全部连接"""
+    from insty import DMMRole
+
+    infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
+                       InstrumentType.DMM, ("VOLTAGE_DC",))]
+    with InstrumentManager(backends=[make_role_backend(infos)]) as mgr:
+        role = mgr.get_dmm()
+        assert isinstance(role, DMMRole)
+        assert role.read_voltage() == 3.3
+
+
+def test_manager_refresh_and_full_scan_cache():
+    """refresh/full_scan 均更新角色匹配用的在线缓存"""
+    infos = [make_info("dmm_addr", "KEITHLEY::DMM6500",
+                       InstrumentType.DMM, ("VOLTAGE_DC",))]
+    backend = make_role_backend(infos)
+    mgr = InstrumentManager(backends=[backend])
+    try:
+        assert [i.address for i in mgr.refresh()] == ["dmm_addr"]
+        assert mgr._infos is not None
+        assert [i.address for i in mgr.full_scan()] == ["dmm_addr"]
+        assert mgr._infos is not None
+    finally:
+        mgr.shutdown()
+
+
+def test_frange():
+    from insty import frange
+    assert frange(0, 1, 0.25) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    with pytest.raises(ValueError):
+        frange(0, 1, 0)

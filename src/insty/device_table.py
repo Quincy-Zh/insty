@@ -94,10 +94,13 @@ class DeviceTable:
         serial_baud: int | None = None,
         inst_type: str | None = None,
         supported: list[str] | None = None,
+        dedup_label: bool = True,
     ) -> None:
         """更新指定地址的信息
 
-        自动清除同 label 但不同地址的旧条目（应对 USB 换口等场景）。
+        仅当 ``dedup_label=True`` 时自动清除同 label 但不同地址的旧条目
+        （应对串口换口等地址漂移场景）。USB/TCPIP 等地址稳定唯一的设备
+        应传 ``False``，同型号多台设备互不干扰。
 
         Args:
             address: 仪器地址
@@ -105,11 +108,13 @@ class DeviceTable:
             serial_baud: 串口波特率，非串口设备传 None
             inst_type: 仪器类型名（如 "dmm"）
             supported: 支持的能力列表
+            dedup_label: 是否清除同 label 不同地址的旧条目
         """
-        for existing_addr in list(self._data.keys()):
-            if existing_addr != address and self._data[existing_addr].get("label") == label:
-                del self._data[existing_addr]
-                logger.info(f"Removed stale entry {existing_addr} -> {label}")
+        if dedup_label:
+            for existing_addr in list(self._data.keys()):
+                if existing_addr != address and self._data[existing_addr].get("label") == label:
+                    del self._data[existing_addr]
+                    logger.info(f"Removed stale entry {existing_addr} -> {label}")
         entry: dict[str, Any] = {
             "label": label,
             "serial_baud": serial_baud,

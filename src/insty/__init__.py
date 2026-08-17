@@ -1,6 +1,7 @@
 """智能仪器仪表
 
-提供仪器类型抽象基类、每类显式注册（register_*）、传输后端、仪器管理器、TestBench 等功能。
+提供仪器类型抽象基类、每类显式注册（register_*）、传输后端、仪器管理器
+（含按类别的角色化接口 get_*）等功能。
 
 驱动在各自模块末尾通过 ``InstrumentRegistry.register_*`` 显式注册
 （如 ``register_oscilloscope("ZHIYUAN::ZDS1104", ZDS1104, supported=...)``）。
@@ -19,16 +20,6 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 # 导入即触发仪器模块的注册
 from . import visa_based_instrument  # noqa: F401
-from .bench import (
-    DMMRole,
-    FrequencyCounterRole,
-    OscilloscopeRole,
-    PowerSupplyRole,
-    TestBench,
-    ThermalChamberRole,
-    WaveformGeneratorRole,
-    frange,
-)
 from .device_table import DeviceTable
 from .instrument_types import (
     DMMBase,
@@ -43,7 +34,15 @@ from .instrument_types import (
     WaveformGeneratorBase,
     make_instrument,
 )
-from .manager import InstrumentManager
+from .manager import InstrumentManager, frange
+from .roles import (
+    DMMRole,
+    FrequencyCounterRole,
+    OscilloscopeRole,
+    PowerSupplyRole,
+    ThermalChamberRole,
+    WaveformGeneratorRole,
+)
 from .transport_backend import TransportBackend
 from .visa_backend import VisaTransportBackend
 
@@ -62,7 +61,6 @@ __all__ = [
     "OscilloscopeRole",
     "PowerSupplyBase",
     "PowerSupplyRole",
-    "TestBench",
     "ThermalChamberBase",
     "ThermalChamberRole",
     "TransportBackend",
