@@ -17,12 +17,13 @@ class VisaBasedInstrument:
         self.visa_inst = resource
 
     def close(self) -> None:
-        """关闭 VISA 连接"""
+        """关闭 VISA 连接（幂等：重复调用安全）"""
         if self.visa_inst is not None:
             try:
                 self.visa_inst.close()
             except Exception as ex:
                 logger.warning(f"Error closing VISA connection: {ex}")
+            self.visa_inst = None
 
     def run_cmds(self, cmds: list[str]) -> bool:
         """执行一组 SCPI 命令（低层命令批量发送）

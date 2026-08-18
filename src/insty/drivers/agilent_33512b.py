@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from pyvisa.resources import Resource
+from typing_extensions import Self
 
 from ..instrument_types import (
     InstrumentRegistry,
@@ -43,7 +44,7 @@ class Agilent33512B(VisaBasedInstrument, WaveformGenerator):
         vpp: float,
         offset: float,
         **kwargs,
-    ) -> None:
+    ) -> Self:
         """配置波形及参数"""
         wave_upper = wave.upper()
         if wave_upper not in _WAVE_MAP:
@@ -95,28 +96,35 @@ class Agilent33512B(VisaBasedInstrument, WaveformGenerator):
         if not self.run_cmds(cmds):
             raise RuntimeError("Failed to configure Agilent33512B")
         self.beep()
+        return self
 
-    def output_enable(self) -> None:
+    def output_enable(self) -> Self:
         """使能输出"""
         if not self.run_cmds([f"OUTPut{self.channel} ON"]):
             raise RuntimeError("Failed to enable output")
+        return self
 
-    def output_disable(self) -> None:
+    def output_disable(self) -> Self:
         """关闭输出"""
         self.run_cmds([f"OUTPut{self.channel} OFF", "OUTPut2 OFF"])
+        return self
 
-    def set_frequency(self, freq: float) -> None:
+    def set_frequency(self, freq: float) -> Self:
         self.run_cmds([f"SOURce{self.channel}:FREQuency {freq}"])
+        return self
 
-    def set_amplitude(self, vpp: float) -> None:
+    def set_amplitude(self, vpp: float) -> Self:
         self.run_cmds([f"SOURce{self.channel}:VOLTage {vpp}"])
+        return self
 
-    def set_offset(self, offset: float) -> None:
+    def set_offset(self, offset: float) -> Self:
         self.run_cmds([f"SOURce{self.channel}:VOLTage:OFFSet {offset}"])
+        return self
 
     def close(self) -> None:
-        """关闭输出"""
+        """关闭输出并释放 VISA 连接"""
         self.output_disable()
+        super().close()
 
 
 # 注册到仪器注册表

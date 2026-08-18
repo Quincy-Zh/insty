@@ -9,6 +9,7 @@ import time
 
 from pyvisa.constants import VI_ATTR_ASRL_BAUD, VI_ATTR_TMO_VALUE
 from pyvisa.resources import Resource
+from typing_extensions import Self
 
 from ..instrument_types import (
     InstrumentRegistry,
@@ -38,7 +39,7 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
         self.me_count = 100
         self.clear_before_execute_mesure = True
 
-    def configure(self, **kwargs) -> None:
+    def configure(self, **kwargs) -> Self:
         """配置示波器参数"""
         for key, value in kwargs.items():
             key_ = key.lower()
@@ -59,6 +60,8 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
                     self.me_count = 100
                     self.clear_before_execute_mesure = True
                     self.timeout = 300
+
+        return self
 
     def _measure(
         self, key: str, channel: int = 1, count_min: int | None = None
@@ -116,7 +119,7 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
         """测量波形脉宽"""
         return self._measure("pulse_width_p", channel)
 
-    def execute(self, mode: str) -> None:
+    def execute(self, mode: str) -> Self:
         """切换运行模式: single/run/stop"""
         mode_lower = mode.lower()
         cmds = {"single": ":SINGle", "run": ":RUN", "stop": ":STOP"}
@@ -126,6 +129,7 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
 
         if not self.run_cmds([cmds[mode_lower]]):
             logger.warning(f'Fail to exec "{mode}"')
+        return self
 
     def read_image(self) -> bytes:
 
@@ -187,7 +191,8 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
         return s.strip().lower() if s else ""
 
     def close(self) -> None:
-        pass
+        """释放 VISA 连接"""
+        super().close()
 
 
 # 注册到仪器注册表

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import ClassVar, Self
+from typing import ClassVar
 
 from pyvisa.resources import Resource
+from typing_extensions import Self
 
 from ..instrument_types import (
     InstrumentRegistry,
@@ -144,6 +145,11 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
                 logger.error(f"Invalid temperature value received: {resp}")
         return None
 
+    def get_status(self) -> bool:
+        """设备是否就绪（AUXC bit6: Startup / Ready）"""
+        status = self._read_auxiliary_condition_register()
+        return status.get(6, "") == "Ready"
+
     def execute(self, action: str) -> Self:
         """执行动作"""
         action_ = action.lower()
@@ -184,16 +190,17 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
         for bitoffset, title in self.ERROR_REGISTER_BIT_MAP.items():
             if reg_val & (1 << bitoffset) == 0:
                 continue
-            rc += title
+            rc.append(title)
 
         return rc
 
     def close(self) -> None:
-        """关闭仪器：设置为室温"""
+        """关闭仪器：设置为室温并释放 VISA 连接"""
         try:
             self.set_temperature(25.0)
         except RuntimeError as ex:
             logger.warning(f"Error during close: {ex}")
+        super().close()
 
 
 # 注册到仪器注册表

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from pyvisa.resources import Resource
+from typing_extensions import Self
 
 from ..instrument_types import (
     InstrumentRegistry,
@@ -49,7 +50,7 @@ class Agilent33519(VisaBasedInstrument, WaveformGenerator):
         vpp: float,
         offset: float,
         **kwargs,
-    ) -> None:
+    ) -> Self:
         """配置波形及参数"""
         wave_upper = wave.upper()
         if wave_upper not in _WAVE_MAP:
@@ -72,6 +73,7 @@ class Agilent33519(VisaBasedInstrument, WaveformGenerator):
         self.run_cmds([cmd])
 
         self._apply_waveform()
+        return self
 
     def _apply_waveform(self) -> None:
         """应用当前波形配置"""
@@ -87,36 +89,43 @@ class Agilent33519(VisaBasedInstrument, WaveformGenerator):
 
         self.run_cmds([cmd])
 
-    def output_enable(self) -> None:
+    def output_enable(self) -> Self:
         """使能输出"""
         if hasattr(self, "channel"):
             cmd = f"OUTPut{self.channel} ON"
         else:
             cmd = "OUTPut ON"
         self.run_cmds([cmd])
+        return self
 
-    def output_disable(self) -> None:
+    def output_disable(self) -> Self:
         """关闭输出"""
         if hasattr(self, "channel"):
             cmd = f"OUTPut{self.channel} OFF"
         else:
             cmd = "OUTPut OFF"
         self.run_cmds([cmd])
+        return self
 
-    def set_frequency(self, freq: float) -> None:
+    def set_frequency(self, freq: float) -> Self:
         self.cfg["freq"] = freq
         self._apply_waveform()
+        return self
 
-    def set_amplitude(self, vpp: float) -> None:
+    def set_amplitude(self, vpp: float) -> Self:
         self.cfg["vpp"] = vpp
         self._apply_waveform()
+        return self
 
-    def set_offset(self, offset: float) -> None:
+    def set_offset(self, offset: float) -> Self:
         self.cfg["offset"] = offset
         self._apply_waveform()
+        return self
 
     def close(self) -> None:
+        """关闭输出并释放 VISA 连接"""
         self.output_disable()
+        super().close()
 
 
 # 注册到仪器注册表

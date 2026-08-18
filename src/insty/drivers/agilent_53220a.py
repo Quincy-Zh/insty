@@ -54,7 +54,8 @@ class Agilent53220A(VisaBasedInstrument, FrequencyCounter):
             return math.nan
 
     def close(self) -> None:
-        pass
+        """释放 VISA 连接"""
+        super().close()
 
 
 # 注册到仪器注册表

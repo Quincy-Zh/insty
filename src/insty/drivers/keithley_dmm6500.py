@@ -6,6 +6,7 @@ import math
 import time
 
 from pyvisa.resources import Resource
+from typing_extensions import Self
 
 from ..instrument_types import (
     DMM,
@@ -146,9 +147,10 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
             ':TRACe:TRIG "MyBuffer"',
         ])
 
-    def configure(self, params: dict | None = None) -> None:
+    def configure(self, params: dict | None = None) -> Self:
         """配置测量参数"""
         # 这里的 configure 是为了兼容性，实际配置在 read_xxx 中完成
+        return self
 
     def read_voltage(self, params: dict | None = None) -> float:
         """读取直流电压"""
@@ -179,11 +181,12 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
         return math.nan
 
     def close(self) -> None:
-        """复位仪器"""
+        """复位仪器并释放 VISA 连接"""
         try:
             self._reset_target()
         except Exception as ex:
             logger.warning(f"Error during close: {ex}")
+        super().close()
 
 
 # 注册到仪器注册表
