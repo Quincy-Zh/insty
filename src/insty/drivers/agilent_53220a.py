@@ -1,6 +1,7 @@
+# 频率计：AGILENT::53220A
+
 from __future__ import annotations
 
-# 频率计：AGILENT::53220A
 import logging
 import math
 

@@ -1,6 +1,7 @@
+# 数字万用表：KEITHLEY::DMM6500
+
 from __future__ import annotations
 
-# 数字万用表：KEITHLEY::DMM6500
 import logging
 import math
 import time
@@ -85,7 +86,9 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
             raise ValueError(f"Unsupported measurement type: {key}")
 
         range_ = param.get("range")
-        if range_ is not None and (not isinstance(range_, (int, float)) or range_ < 1e-12):
+        if range_ is not None and (
+            not isinstance(range_, (int, float)) or range_ < 1e-12
+        ):
             raise ValueError("'range' parameter must be a positive number or None")
 
         power_line_cycles = param.get("power_line_cycles")
@@ -105,7 +108,9 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
             and "type" in filter_opt
             and "count" in filter_opt
         ):
-            raise ValueError("'filter' parameter must be a dict with 'type' and 'count'")
+            raise ValueError(
+                "'filter' parameter must be a dict with 'type' and 'count'"
+            )
 
         func = _SUPPORTED_FUNCS[key]
         buffer_size = param.get("buffer_size", 100)
@@ -134,18 +139,22 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
                 self.me_cmds.append(f":SENS:{func}:AZER OFF")
 
         if filter_opt:
-            self.me_cmds.extend([
-                f':SENS:{func}:AVER:TCON {filter_opt["type"]}',
-                f':SENS:{func}:AVER:COUN {filter_opt["count"]}',
-                f":SENS:{func}:AVER ON",
-            ])
+            self.me_cmds.extend(
+                [
+                    f':SENS:{func}:AVER:TCON {filter_opt["type"]}',
+                    f':SENS:{func}:AVER:COUN {filter_opt["count"]}',
+                    f":SENS:{func}:AVER ON",
+                ]
+            )
 
-        self.me_cmds.extend([
-            f':TRACe:MAKE "MyBuffer", {self.buffer_size}',
-            ':TRACe:CLE "MyBuffer"',
-            f":SENS:COUN {self.buffer_size}",
-            ':TRACe:TRIG "MyBuffer"',
-        ])
+        self.me_cmds.extend(
+            [
+                f':TRACe:MAKE "MyBuffer", {self.buffer_size}',
+                ':TRACe:CLE "MyBuffer"',
+                f":SENS:COUN {self.buffer_size}",
+                ':TRACe:TRIG "MyBuffer"',
+            ]
+        )
 
     def configure(self, params: dict | None = None) -> Self:
         """配置测量参数"""
@@ -170,7 +179,9 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
         if not self.run_cmds(self.me_cmds):
             return math.nan
 
-        if not self._wait_buffer_ready("MyBuffer", self.buffer_size, int(self.buffer_size / 5)):
+        if not self._wait_buffer_ready(
+            "MyBuffer", self.buffer_size, int(self.buffer_size / 5)
+        ):
             return math.nan
 
         statistics = self._read_statistics("MyBuffer")

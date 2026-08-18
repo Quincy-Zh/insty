@@ -1,6 +1,7 @@
+# 数字电源：ITECH::IT6302
+
 from __future__ import annotations
 
-# 数字电源：ITECH::IT6302
 import logging
 
 from pyvisa.resources import Resource

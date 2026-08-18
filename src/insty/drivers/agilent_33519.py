@@ -1,6 +1,7 @@
+# 信号发生器：AGILENT::33519
+
 from __future__ import annotations
 
-# 信号发生器：AGILENT::33519
 import logging
 
 from pyvisa.resources import Resource
