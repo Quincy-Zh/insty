@@ -105,7 +105,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
 
         return rc
 
-    def setup(self) -> Self:
+    def setup(self, **kwargs) -> Self:
         """初始化:
         - 停止 cycling
         - Enter Ramp
@@ -145,11 +145,6 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
                 logger.error(f"Invalid temperature value received: {resp}")
         return None
 
-    def get_status(self) -> bool:
-        """设备是否就绪（AUXC bit6: Startup / Ready）"""
-        status = self._read_auxiliary_condition_register()
-        return status.get(6, "") == "Ready"
-
     def execute(self, action: str) -> Self:
         """执行动作"""
         action_ = action.lower()
@@ -182,7 +177,7 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
         status = self._read_auxiliary_condition_register()
         return status.get(2, "") == "Head down"
 
-    def get_error(self) -> list[str]:
+    def get_errors(self) -> list[str]:
         rc = []
         reg_val = self._read_register("EROR?")
         logger.debug(f"EROR: {reg_val:016b}.")

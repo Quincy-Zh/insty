@@ -63,6 +63,17 @@ class Instrument(ABC):
         """关闭仪器连接"""
         raise NotImplementedError
 
+    def get_errors(self) -> list[str]:
+        """查询设备错误队列
+
+        每条格式为 ``<错误码>,<错误信息>``）；不支持或无需查询时返回空列表。
+        """
+        return []
+
+    def setup(self, **kwargs) -> Self:
+        """初始化仪器（如连接参数、运行模式），子类可重写"""
+        return self
+
 
 class PowerSupply(Instrument):
     """数字电源类型抽象基类
@@ -102,7 +113,7 @@ class ThermalChamber(Instrument):
         setup() -> Self
         execute(action: str) -> Self
         ready() -> bool
-        get_error() -> list[str]
+        get_errors() -> list[str]
     """
 
     @abstractmethod
@@ -120,9 +131,6 @@ class ThermalChamber(Instrument):
         """读取当前温度"""
         raise NotImplementedError
 
-    def get_status(self) -> bool:
-        raise NotImplementedError
-
     def prepare(self) -> Self:
         """开机检查与初始化配置，子类可重写"""
         return self
@@ -131,7 +139,7 @@ class ThermalChamber(Instrument):
         """重置，子类可重写"""
         return self
 
-    def setup(self) -> Self:
+    def setup(self, **kwargs) -> Self:
         """初始化（如停止 cycling、使能 DUT mode），子类可重写"""
         return self
 
@@ -143,10 +151,6 @@ class ThermalChamber(Instrument):
         """设备是否就绪（如 Head 已下压到位），子类可重写"""
         return False
 
-    def get_error(self) -> list[str]:
-        """获取错误信息列表，子类可重写"""
-        return []
-
     def close(self) -> None:
         pass
 
@@ -155,45 +159,37 @@ class WaveformGenerator(Instrument):
     """信号发生器类型抽象基类
 
     支持接口：
-        configure(wave: str, freq: float, vpp: float, offset: float, **kwargs) -> Self
-        output_enable() -> Self
-        output_disable() -> Self
-        set_frequency(freq: float) -> Self
-        set_amplitude(vpp: float) -> Self
-        set_offset(offset: float) -> Self
+        setup(**kwargs) -> Self
+        output_enable(channel: int = 1) -> Self
+        output_disable(channel: int = 1) -> Self
+        set_frequency(freq: float, channel: int = 1) -> Self
+        set_amplitude(vpp: float, channel: int = 1) -> Self
+        set_offset(offset: float, channel: int = 1) -> Self
     """
 
+    def setup(self, channel: int = 1, **kwargs) -> Self:
+        """初始化并配置波形及参数（wave/freq/vpp/offset），支持链式调用"""
+        return self
+
     @abstractmethod
-    def configure(
-        self,
-        wave: str,
-        freq: float,
-        vpp: float,
-        offset: float,
-        **kwargs,
-    ) -> Self:
-        """配置波形及参数。wave: DC/SIN/SQU/RAMP/TRI，支持链式调用"""
+    def output_enable(self, channel: int = 1) -> Self:
+        """使能输出。channel=0 表示全部通道"""
         raise NotImplementedError
 
     @abstractmethod
-    def output_enable(self) -> Self:
-        """使能输出"""
+    def output_disable(self, channel: int = 1) -> Self:
+        """关闭输出。channel=0 表示全部通道"""
         raise NotImplementedError
 
-    @abstractmethod
-    def output_disable(self) -> Self:
-        """关闭输出"""
-        raise NotImplementedError
-
-    def set_frequency(self, freq: float) -> Self:
+    def set_frequency(self, freq: float, channel: int = 1) -> Self:
         """设置频率（Hz），子类可重写"""
         return self
 
-    def set_amplitude(self, vpp: float) -> Self:
+    def set_amplitude(self, vpp: float, channel: int = 1) -> Self:
         """设置幅值（Vpp），子类可重写"""
         return self
 
-    def set_offset(self, offset: float) -> Self:
+    def set_offset(self, offset: float, channel: int = 1) -> Self:
         """设置偏置（V），子类可重写"""
         return self
 
@@ -205,24 +201,19 @@ class DMM(Instrument):
     """数字万用表类型抽象基类
 
     支持接口：
-        read_voltage(params: dict = None) -> float
-        read_current(params: dict = None) -> float
-        configure(params: dict) -> Self
+        read_voltage(params: dict = None) -> Optional[float]
+        read_current(params: dict = None) -> Optional[float]
     """
 
     @abstractmethod
-    def read_voltage(self, params: dict | None = None) -> float:
-        """读取电压（直流）。params 可包含 range、power_line_cycles、filter 等"""
+    def read_voltage(self, params: dict | None = None) -> float | None:
+        """读取电压（直流），测量失败时返回 None。params 可包含 range、power_line_cycles、filter 等"""
         raise NotImplementedError
 
     @abstractmethod
-    def read_current(self, params: dict | None = None) -> float:
-        """读取电流（直流）"""
+    def read_current(self, params: dict | None = None) -> float | None:
+        """读取电流（直流），测量失败时返回 None"""
         raise NotImplementedError
-
-    def configure(self, params: dict | None = None) -> Self:
-        """配置测量参数，子类可重写"""
-        return self
 
     def close(self) -> None:
         pass
@@ -232,27 +223,27 @@ class Oscilloscope(Instrument):
     """示波器类型抽象基类
 
     支持接口：
-        read_frequency() -> float
-        read_duty_cycle() -> float
-        read_pulse() -> float
+        read_frequency() -> Optional[float]
+        read_duty_cycle() -> Optional[float]
+        read_pulse() -> Optional[float]
         execute(mode: str) -> Self
         screenshot() -> bytes
-        configure(**kw) -> Self
+        setup(**kw) -> Self
     """
 
     @abstractmethod
-    def read_frequency(self) -> float:
-        """测量波形频率（Hz）"""
+    def read_frequency(self) -> float | None:
+        """测量波形频率（Hz），失败时返回 None"""
         raise NotImplementedError
 
     @abstractmethod
-    def read_duty_cycle(self) -> float:
-        """测量波形占空比（比值 0~1）"""
+    def read_duty_cycle(self) -> float | None:
+        """测量波形占空比（比值 0~1），失败时返回 None"""
         raise NotImplementedError
 
     @abstractmethod
-    def read_pulse(self) -> float:
-        """测量波形脉宽（s）"""
+    def read_pulse(self) -> float | None:
+        """测量波形脉宽（s），失败时返回 None"""
         raise NotImplementedError
 
     @abstractmethod
@@ -265,10 +256,6 @@ class Oscilloscope(Instrument):
         """截屏，返回图片字节数据"""
         raise NotImplementedError
 
-    def configure(self, **kw) -> Self:
-        """透传底层配置（如 baudrate/signal/key），子类可重写"""
-        return self
-
     def close(self) -> None:
         pass
 
@@ -277,18 +264,18 @@ class FrequencyCounter(Instrument):
     """频率计类型抽象基类
 
     支持接口：
-        read_frequency() -> float
-        read_duty_cycle() -> float
+        read_frequency() -> Optional[float]
+        read_duty_cycle() -> Optional[float]
     """
 
     @abstractmethod
-    def read_frequency(self) -> float:
-        """测量波形频率（Hz）"""
+    def read_frequency(self) -> float | None:
+        """测量波形频率（Hz），失败时返回 None"""
         raise NotImplementedError
 
     @abstractmethod
-    def read_duty_cycle(self) -> float:
-        """测量波形占空比（比值 0~1）"""
+    def read_duty_cycle(self) -> float | None:
+        """测量波形占空比（比值 0~1），失败时返回 None"""
         raise NotImplementedError
 
     def close(self) -> None:

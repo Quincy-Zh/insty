@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import math
 import time
 
 from pyvisa.resources import Resource
-from typing_extensions import Self
 
 from ..instrument_types import (
     DMM,
@@ -156,40 +154,35 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
             ]
         )
 
-    def configure(self, params: dict | None = None) -> Self:
-        """配置测量参数"""
-        # 这里的 configure 是为了兼容性，实际配置在 read_xxx 中完成
-        return self
-
-    def read_voltage(self, params: dict | None = None) -> float:
-        """读取直流电压"""
+    def read_voltage(self, params: dict | None = None) -> float | None:
+        """读取直流电压，测量失败时返回 None"""
         params = params or {}
         self._setup("voltage_dc", params)
         return self._measure("voltage_dc")
 
-    def read_current(self, params: dict | None = None) -> float:
-        """读取直流电流"""
+    def read_current(self, params: dict | None = None) -> float | None:
+        """读取直流电流，测量失败时返回 None"""
         params = params or {}
         self._setup("current_dc", params)
         return self._measure("current_dc")
 
-    def _measure(self, key: str) -> float:
-        """执行测量并返回平均值"""
+    def _measure(self, key: str) -> float | None:
+        """执行测量并返回平均值，失败时返回 None"""
         self._reset_target()
         if not self.run_cmds(self.me_cmds):
-            return math.nan
+            return None
 
         if not self._wait_buffer_ready(
             "MyBuffer", self.buffer_size, int(self.buffer_size / 5)
         ):
-            return math.nan
+            return None
 
         statistics = self._read_statistics("MyBuffer")
         self.run_cmds([':TRACe:DELete "MyBuffer"'])
 
         if statistics:
-            return statistics.get("average", math.nan)
-        return math.nan
+            return statistics.get("average")
+        return None
 
     def close(self) -> None:
         """复位仪器并释放 VISA 连接"""

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 
 from pyvisa.resources import Resource
 
@@ -36,23 +35,31 @@ class Agilent53220A(VisaBasedInstrument, FrequencyCounter):
         if self.beep_:
             self.run_cmds(["SYSTem:BEEPer"])
 
-    def read_frequency(self, channel: int = 1) -> float:
-        """测量波形频率（Hz）"""
+    def read_frequency(self, channel: int = 1) -> float | None:
+        """测量波形频率（Hz）
+
+        值无效（INFinity 或 >= 9.9E+37）或查询失败时返回 None
+        """
         try:
             x = self.query(f"MEASure:FREQuency? (@{channel})")
-            return float(x) if x else math.nan
+            if not x:
+                return None
+            val = float(x)
+            if val >= 9.9e37:
+                return None
+            return val
         except Exception as e:
             logger.error(f"Error reading frequency: {e}")
-            return math.nan
+            return None
 
-    def read_duty_cycle(self, channel: int = 1) -> float:
-        """测量波形占空比（比值 0~1）"""
+    def read_duty_cycle(self, channel: int = 1) -> float | None:
+        """测量波形占空比（比值 0~1），查询失败时返回 None"""
         try:
             x = self.query(f"MEASure:PDUTycycle? (@{channel})")
-            return float(x) if x else math.nan
+            return float(x) if x else None
         except Exception as e:
             logger.error(f"Error reading duty cycle: {e}")
-            return math.nan
+            return None
 
     def close(self) -> None:
         """释放 VISA 连接"""

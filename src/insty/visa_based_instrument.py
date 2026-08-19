@@ -53,11 +53,29 @@ class VisaBasedInstrument:
             logger.error(f'Fail to query command "{cmd}": {ex}')
             return None
 
+    def get_errors(self) -> list[str]:
+        """查询并清空设备错误队列，逐条读取直至 +0,"No error"
+
+        每条回复格式为 "<错误码>,<错误信息>"（如 -222,"Data out of range"），
+        错误码通常为负数；回复 +0,"No error" 表示队列已清空。
+
+        Returns:
+            未清除的错误条目列表；无错误时返回空列表
+        """
+        errors: list[str] = []
+        while True:
+            resp = self.query("SYSTem:ERRor?")
+            if resp is None:
+                break
+            if resp.startswith("+0") or "No error" in resp:
+                break
+            errors.append(resp)
+        return errors
+
 
 # 导入所有驱动模块以触发注册
 from .drivers import (  # noqa: F401
-    agilent_33512b,
-    agilent_33519,
+    agilent_3351x,
     agilent_53220a,
     itech_it6302,
     keithley_dmm6500,

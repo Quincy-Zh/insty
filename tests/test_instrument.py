@@ -117,6 +117,224 @@ def test_base_instrument():
         Instrument()  # type: ignore
 
 
+def test_get_errors_drains_queue():
+    """get_errors 循环查询 SYSTem:ERRor? 直到返回 +0,"No error" """
+    responses = iter([
+        '-222,"Data out of range"',
+        '-113,"Undefined header"',
+        '+0,"No error"',
+    ])
+
+    class FakeResource:
+        def write(self, cmd):
+            pass
+
+        def query(self, cmd):
+            assert cmd == "SYSTem:ERRor?"
+            return next(responses)
+
+        def close(self):
+            pass
+
+    inst = VisaBasedInstrument(FakeResource())
+    assert inst.get_errors() == [
+        '-222,"Data out of range"',
+        '-113,"Undefined header"',
+    ]
+
+
+def test_get_errors_no_error():
+    """设备无错误时 get_errors 返回空列表"""
+    class FakeResource:
+        def query(self, cmd):
+            return '+0,"No error"'
+
+        def close(self):
+            pass
+
+    inst = VisaBasedInstrument(FakeResource())
+    assert inst.get_errors() == []
+
+
+def test_get_errors_exposed_on_type_classes():
+    """get_errors 通过 Instrument 基类暴露给 DMM/频率计等类型，VISA 驱动走真实实现"""
+    from insty.instrument_types import DMM, Instrument, ThermalChamber
+
+    assert callable(DMM.get_errors)
+    assert callable(Instrument.get_errors)
+    assert ThermalChamber.get_errors is Instrument.get_errors
+
+    from insty.drivers.keithley_dmm6500 import KeithleyDMM6500
+    assert KeithleyDMM6500.get_errors is VisaBasedInstrument.get_errors
+
+
+def test_setup_default_and_driver_impl():
+    """setup 由 Instrument 提供默认实现，具体驱动可重写（ZDS 透传 configure）"""
+    from insty.drivers.agilent_53220a import Agilent53220A
+    from insty.drivers.zhiyuan_zds1000 import ZDS1104
+
+    class FakeResource:
+        def query(self, cmd):
+            return None
+
+        def write(self, cmd):
+            pass
+
+        def set_visa_attribute(self, attr, val):
+            pass
+
+        def close(self):
+            pass
+
+    cnt = Agilent53220A(FakeResource())
+    assert cnt.setup() is cnt
+
+    osc = ZDS1104(FakeResource())
+    assert osc.setup(baudrate=115200) is osc
+
+
+def test_waveform_setup_from_kwargs():
+    """波形发生器 setup 从 kwargs 获取 wave/freq/vpp/offset"""
+    from insty.drivers.agilent_3351x import Agilent33512B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33512B(FakeResource())
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
+    assert any("FUNCtion SIN" in c for c in writes)
+    assert any("FREQuency 1000.0" in c for c in writes)
+
+    with pytest.raises(KeyError):
+        inst.setup(wave="SIN")
+
+
+def test_waveform_channels_and_channel_param():
+    """基类 channels 属性与 channel 参数校验"""
+    from insty.drivers.agilent_3351x import Agilent33512B, Agilent33519
+
+    class FakeResource:
+        def write(self, cmd):
+            pass
+
+        def close(self):
+            pass
+
+    inst = Agilent33512B(FakeResource())
+    assert inst.channels == 2
+    with pytest.raises(ValueError):
+        inst.setup(channel=3, wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
+
+    inst19 = Agilent33519(FakeResource())
+    assert inst19.channels == 1
+    with pytest.raises(ValueError):
+        inst19.output_enable(channel=2)
+
+
+def test_waveform_output_disable_all_channels():
+    """output_disable(0) 关闭全部通道（33512B 双通道）"""
+    from insty.drivers.agilent_3351x import Agilent33512B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33512B(FakeResource())
+    inst.output_disable(0)
+    assert writes == ["OUTPut1 OFF", "OUTPut2 OFF"]
+
+
+def test_waveform_channel_specific_command():
+    """多通道按 channel 下发命令，单通道无数字后缀"""
+    from insty.drivers.agilent_3351x import Agilent33512B, Agilent33519
+
+    writes_12b = []
+
+    class Fake12B(Agilent33512B):
+        def run_cmds(self, cmds):
+            writes_12b.extend(cmds)
+            return True
+
+    inst = Fake12B(None)
+    inst.output_enable(channel=2)
+    assert writes_12b == ["OUTPut2 ON"]
+    inst.set_frequency(1000.0, channel=2)
+    assert "SOURce2:FREQuency 1000.0" in writes_12b
+
+    writes_19 = []
+
+    class Fake19(Agilent33519):
+        def run_cmds(self, cmds):
+            writes_19.extend(cmds)
+            return True
+
+    inst19 = Fake19(None)
+    inst19.output_enable()
+    assert writes_19 == ["OUTPut ON"]
+
+
+def test_pick_keys():
+    """pick_keys 按 key 顺序返回元组，忽略大小写，缺失为 None"""
+    from insty.utils import pick_keys
+
+    src = {"WAVE": "SIN", "Freq": 1000.0, "VPP": 3.3, "other": 1}
+    assert pick_keys(src, ["wave", "freq", "vpp"]) == ("SIN", 1000.0, 3.3)
+
+    assert pick_keys({}, ["a", "b"]) == (None, None)
+    assert pick_keys(src, ["wave", "nope"]) == ("SIN", None)
+
+
+def test_waveform_setup_case_insensitive():
+    """波形发生器 setup 支持大小写混合的 kwargs key"""
+    from insty.drivers.agilent_3351x import Agilent33512B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33512B(FakeResource())
+    inst.setup(WAVE="SIN", FREQ=1000.0, Vpp=3.3, Offset=0.0)
+    assert any("FREQuency 1000.0" in c for c in writes)
+
+
+def test_53220a_read_frequency_invalid_returns_none():
+    """53220A 读取到 INFinity 或 >= 9.9E+37 视为无效，返回 None"""
+    from insty.drivers.agilent_53220a import Agilent53220A
+
+    class FakeResource:
+        def __init__(self, resp):
+            self._resp = resp
+
+        def query(self, cmd):
+            return self._resp
+
+        def close(self):
+            pass
+
+    for bad in ("INFinity", "+9.9E+37", "9.900000E+37"):
+        inst = Agilent53220A(FakeResource(bad))
+        assert inst.read_frequency() is None
+
+    inst = Agilent53220A(FakeResource("1000.0"))
+    assert inst.read_frequency() == 1000.0
+
+
 def test_format_idn():
     from insty.visa_backend import VisaTransportBackend
     assert VisaTransportBackend.format_idn("KEITHLEY, MODEL DMM6500") == "KEITHLEY::DMM6500"
@@ -629,7 +847,6 @@ def test_multiple_backends_with_connection():
                 raise RuntimeError(f"BackendA cannot open {address}")
             opened_by[address] = "A"
             class FakeInst(Instrument):
-                def configure(self, *args, **kwargs): return 0
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
                 def stop(self): return 0
@@ -646,7 +863,6 @@ def test_multiple_backends_with_connection():
                 raise RuntimeError(f"BackendB cannot open {address}")
             opened_by[address] = "B"
             class FakeInst(Instrument):
-                def configure(self, *args, **kwargs): return 0
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
                 def stop(self): return 0
@@ -732,7 +948,6 @@ def test_multiple_backends_fallback():
             return make_info("dev", "VENDOR::OK") if address == "dev" else None
         def open(self, address, label, timeout=30000):
             class FakeInst(Instrument):
-                def configure(self, *args, **kwargs): return 0
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
                 def stop(self): return 0
@@ -764,8 +979,7 @@ def make_mock_backend(infos):
         def output_disable(self, channel=0): return self
         def read_voltage(self, params=None): return 3.3
         def read_current(self, params=None): return 0.1
-        def configure(self, *args, **kwargs): return self
-        def get_status(self): return "RUN"
+        def get_run_state(self): return "RUN"
         def execute(self, mode): return self
         def read_frequency(self, channel=1): return 1000.0
         def read_duty_cycle(self, channel=1): return 0.5
@@ -777,7 +991,7 @@ def make_mock_backend(infos):
         def setup(self): return self
         def wait(self, timeout=150): return True
         def ready(self): return True
-        def get_error(self): return []
+        def get_errors(self): return []
         def close(self): pass
 
     class MockBackend(TransportBackend):

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import time
 
 from pyvisa.constants import VI_ATTR_ASRL_BAUD, VI_ATTR_TMO_VALUE
@@ -15,6 +14,7 @@ from ..instrument_types import (
     InstrumentRegistry,
     Oscilloscope,
 )
+from ..utils import pick_keys
 from ..visa_based_instrument import VisaBasedInstrument
 
 logger = logging.getLogger(__name__)
@@ -39,34 +39,32 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
         self.me_count = 100
         self.clear_before_execute_mesure = True
 
-    def configure(self, **kwargs) -> Self:
-        """配置示波器参数"""
-        for key, value in kwargs.items():
-            key_ = key.lower()
-            if key_ == "baudrate":
-                assert self.visa_inst is not None
-                self.visa_inst.set_visa_attribute(VI_ATTR_TMO_VALUE, 10000)  # type: ignore
-                self.visa_inst.set_visa_attribute(VI_ATTR_ASRL_BAUD, value)  # type: ignore
-            elif key_ == "signal":
-                if value == 1:
-                    self.execute("single")
-                    time.sleep(0.5)
-            elif key_ == "key":
-                if "pulse_width_p" in value or "pulse_width_n" in value:
-                    self.me_count = 1
-                    self.clear_before_execute_mesure = False
-                    self.timeout = 10
-                else:
-                    self.me_count = 100
-                    self.clear_before_execute_mesure = True
-                    self.timeout = 300
+    def setup(self, **kwargs) -> Self:
+        """初始化示波器参数（baudrate/signal/key）"""
+        baudrate, signal, key = pick_keys(kwargs, ["baudrate", "signal", "key"])
+        if baudrate is not None:
+            assert self.visa_inst is not None
+            self.visa_inst.set_visa_attribute(VI_ATTR_TMO_VALUE, 10000)  # type: ignore
+            self.visa_inst.set_visa_attribute(VI_ATTR_ASRL_BAUD, baudrate)  # type: ignore
+        if signal == 1:
+            self.execute("single")
+            time.sleep(0.5)
+        if key is not None:
+            if "pulse_width_p" in key or "pulse_width_n" in key:
+                self.me_count = 1
+                self.clear_before_execute_mesure = False
+                self.timeout = 10
+            else:
+                self.me_count = 100
+                self.clear_before_execute_mesure = True
+                self.timeout = 300
 
         return self
 
     def _measure(
         self, key: str, channel: int = 1, count_min: int | None = None
-    ) -> float:
-        """执行单项测量并返回平均值"""
+    ) -> float | None:
+        """执行单项测量并返回平均值，失败时返回 None"""
         if count_min is None:
             count_min = self.me_count
 
@@ -103,20 +101,20 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
         v = self.query(f":MEASure:{item}:AVERage? CHANnel{channel}")
         if v:
             v = v.replace("\x00", "").strip()
-            return float(v) if v else math.nan
+            return float(v) if v else None
         logger.warning(f"No value returned for {key}")
-        return math.nan
+        return None
 
-    def read_frequency(self, channel: int = 1) -> float:
-        """测量波形频率"""
+    def read_frequency(self, channel: int = 1) -> float | None:
+        """测量波形频率，失败时返回 None"""
         return self._measure("frequency", channel)
 
-    def read_duty_cycle(self, channel: int = 1) -> float:
-        """测量波形占空比"""
+    def read_duty_cycle(self, channel: int = 1) -> float | None:
+        """测量波形占空比，失败时返回 None"""
         return self._measure("duty_cycle", channel)
 
-    def read_pulse(self, channel: int = 1) -> float:
-        """测量波形脉宽"""
+    def read_pulse(self, channel: int = 1) -> float | None:
+        """测量波形脉宽，失败时返回 None"""
         return self._measure("pulse_width_p", channel)
 
     def execute(self, mode: str) -> Self:
@@ -186,7 +184,8 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
             logger.error(f"Screenshot failed: {ex}")
             return b""
 
-    def get_status(self) -> str:
+    def get_run_state(self) -> str:
+        """查询运行状态（如 run/single/stop）"""
         s = self.query(":GLOBal:RUN:STATe?")
         return s.strip().lower() if s else ""
 
