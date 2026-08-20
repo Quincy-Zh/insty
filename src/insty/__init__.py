@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -35,6 +35,7 @@ from .instrument_types import (
 )
 from .manager import InstrumentManager
 from .transport_backend import TransportBackend
+from .utils import frange
 from .visa_backend import VisaTransportBackend
 
 __all__ = [
@@ -51,5 +52,6 @@ __all__ = [
     "TransportBackend",
     "VisaTransportBackend",
     "WaveformGenerator",
+    "frange",
     "make_instrument",
 ]
