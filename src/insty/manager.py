@@ -277,6 +277,7 @@ class InstrumentManager:
         for backend in self._backends:
             try:
                 inst = backend.open(address, label, timeout)
+                inst._attach_manager(self)
                 self._connections[address] = inst
                 self._connection_backend[address] = backend
                 logger.info(f"[{backend.name}] Opened {label} @ {address}")
@@ -292,6 +293,19 @@ class InstrumentManager:
             f"Cannot open instrument {label} @ {address}: "
             f"no suitable backend (tried {len(self._backends)} backend(s))"
         ) from last_ex
+
+    def _on_inst_closed(self, inst: Instrument) -> None:
+        """实例 close() 时回调：从连接缓存移除该实例（幂等）
+
+        由 :meth:`Instrument.close` 模板方法在关闭底层连接后调用，
+        按实例对象反查地址。
+        """
+        for addr, cached in list(self._connections.items()):
+            if cached is inst:
+                self._connections.pop(addr)
+                self._connection_backend.pop(addr, None)
+                logger.debug(f"Instrument {addr} closed, removed from cache")
+                return
 
     def close(self, address: str) -> None:
         """关闭指定仪器的连接

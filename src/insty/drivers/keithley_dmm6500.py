@@ -1,4 +1,4 @@
-# 数字万用表：KEITHLEY::DMM6500
+# KEITHLEY DMM6500 数字万用表
 
 from __future__ import annotations
 
@@ -184,13 +184,13 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
             return statistics.get("average")
         return None
 
-    def close(self) -> None:
+    def _close(self) -> None:
         """复位仪器并释放 VISA 连接"""
         try:
             self._reset_target()
         except Exception as ex:
             logger.warning(f"Error during close: {ex}")
-        super().close()
+        super()._close()
 
 
 # 注册到仪器注册表

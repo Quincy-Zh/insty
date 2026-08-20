@@ -147,7 +147,7 @@ mgr.close_all()
 | 示波器 | `Oscilloscope` | ZHIYUAN::ZDS1000 |
 | 高低温发生器 | `ThermalChamber` | TEMPTRONIC::ATS710 |
 | 频率计数器 | `FrequencyCounter` | AGILENT::53220A |
-| 信号发生器 | `WaveformGenerator` | AGILENT::33519, AGILENT::33519, AGILENT::33512B |
+| 信号发生器 | `WaveformGenerator` | AGILENT::33519B, AGILENT::33522B, AGILENT::33612A |
 
 > 只要仪器支持标准 SCPI 指令集，`Insty` 就能通过 `InstrumentRegistry` 快速适配。欢迎提交 PR 新增厂商驱动！
 
@@ -185,6 +185,7 @@ mgr.close_all()
 
 **工具函数：**
 - `make_instrument(name, resource)` — 驱动工厂方法
+- `frange(start, stop, step)` — 浮点等差数列（含端点）
 
 ## 贡献
 

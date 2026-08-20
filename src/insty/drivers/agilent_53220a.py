@@ -1,4 +1,4 @@
-# 频率计：AGILENT::53220A
+# Agilent 53220A 频率计
 
 from __future__ import annotations
 
@@ -29,11 +29,6 @@ class Agilent53220A(VisaBasedInstrument, FrequencyCounter):
         super().__init__(resource)
         logger.debug(f"Initializing AGILENT::53220A with {resource}")
         self.channel = 1
-        self.beep_ = False
-
-    def beep(self):
-        if self.beep_:
-            self.run_cmds(["SYSTem:BEEPer"])
 
     def read_frequency(self, channel: int = 1) -> float | None:
         """测量波形频率（Hz）
@@ -61,9 +56,9 @@ class Agilent53220A(VisaBasedInstrument, FrequencyCounter):
             logger.error(f"Error reading duty cycle: {e}")
             return None
 
-    def close(self) -> None:
+    def _close(self) -> None:
         """释放 VISA 连接"""
-        super().close()
+        super()._close()
 
 
 # 注册到仪器注册表

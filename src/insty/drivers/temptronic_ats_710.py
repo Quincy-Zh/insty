@@ -1,4 +1,4 @@
-# 高低温发生器：TEMPTRONIC::ATS-710
+# TEMPTRONIC ATS-700/-800 系列高低温发生器
 
 from __future__ import annotations
 
@@ -189,13 +189,13 @@ class TemptronicATS710(VisaBasedInstrument, ThermalChamber):
 
         return rc
 
-    def close(self) -> None:
+    def _close(self) -> None:
         """关闭仪器：设置为室温并释放 VISA 连接"""
         try:
             self.set_temperature(25.0)
         except RuntimeError as ex:
             logger.warning(f"Error during close: {ex}")
-        super().close()
+        super()._close()
 
 
 # 注册到仪器注册表

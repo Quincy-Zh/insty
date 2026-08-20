@@ -1,5 +1,4 @@
-# 信号发生器：AGILENT::33512B / AGILENT::33519
-# Agilent 33500 系列 Trueform 信号发生器
+# Agilent 33500/33600 系列 Trueform 信号发生器
 
 from __future__ import annotations
 
@@ -27,19 +26,30 @@ _WAVE_MAP = {
 
 
 class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
-    """Agilent 33500 系列信号发生器公共基类"""
+    """Agilent 33500/33600 系列信号发生器公共基类"""
 
     # 通道数，子类赋予正确值
     channels: int = 1
 
     def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
-        self.beep_ = False
         self.channel = 1  # 默认操作通道
+        # 当前配置状态，供 set_* 增量修改时复用校验
+        self._wave = "SIN"
+        self._vpp = 0.0
+        self._offset = 0.0
+        self._phase = 0.0
+        self._load = "INF"  # 输出终止负载，默认高阻
+        # 各通道输出状态（True=开, False=关），由 output_enable/disable 维护
+        self._output_states: dict[int, bool] = {c: False for c in range(1, self.channels + 1)}
 
-    def beep(self):
-        if self.beep_:
-            self.run_cmds(["SYSTem:BEEPer"])
+    @property
+    def Vmax(self) -> float:
+        """当前终止负载下的最大峰值电压（V）：高阻 10V、50Ω 5V，其余按 50Ω 源阻抗分压推算"""
+        if self._load == "INF":
+            return 10
+        load = float(self._load)
+        return 10 * load / (load + 50)
 
     def _check_channel(self, channel: int) -> None:
         """校验通道号是否在 1~channels 范围内"""
@@ -56,196 +66,258 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         self._check_channel(channel)
         return f"OUTPut{channel}" if self.channels > 1 else "OUTPut"
 
-    def _parse_setup_args(self, kwargs) -> tuple[str, float, float, float]:
-        """从 kwargs 摘取 wave/freq/vpp/offset 并校验，返回 (wave, freq, vpp, offset)"""
-        wave, freq, vpp, offset = pick_keys(kwargs, ["wave", "freq", "vpp", "offset"])
-        if wave is None or freq is None or vpp is None or offset is None:
-            raise KeyError("Missing required parameters: wave/freq/vpp/offset")
+    def _parse_setup_args(self, wave: str, kwargs) -> tuple[str, float, float, float]:
+        """归一化 wave 并从 kwargs 摘取其余参数，返回 (wave, freq, vpp, offset)
+
+        非 DC 波形还需 freq/vpp/offset；DC 波形仅需 offset（直流电平），
+        freq/vpp 忽略
+        """
         wave_upper = wave.upper()
         if wave_upper not in _WAVE_MAP:
             raise ValueError(f'Unsupported wave type: {wave}')
-        return _WAVE_MAP[wave_upper], freq, vpp, offset
+        wave = _WAVE_MAP[wave_upper]
+        freq, vpp, offset = pick_keys(kwargs, ["freq", "vpp", "offset"])
+        if wave == "DC":
+            if offset is None:
+                raise KeyError("Missing required parameter: offset")
+            return wave, 0.0, 0.0, offset
+        if freq is None or vpp is None or offset is None:
+            raise KeyError("Missing required parameters: freq/vpp/offset")
+        return wave, freq, vpp, offset
 
-    def output_enable(self, channel: int = 1) -> Self:
-        """使能输出。channel=0 表示全部通道"""
-        if channel == 0:
-            cmds = [f"{self._out_prefix(c)} ON" for c in range(1, self.channels + 1)]
-        else:
-            self._check_channel(channel)
-            cmds = [f"{self._out_prefix(channel)} ON"]
-        if not self.run_cmds(cmds):
-            raise RuntimeError("Failed to enable output")
-        return self
+    def _check_offset_limit(self, offset: float, vpp: float) -> None:
+        """校验 |offset| < Vmax - vpp/2（手册 VOLTage 命令约束）"""
+        if abs(offset) >= self.Vmax - vpp / 2:
+            raise ValueError("|offset| must be less than (Vmax - vpp/2)")
 
-    def output_disable(self, channel: int = 1) -> Self:
-        """关闭输出。channel=0 表示全部通道"""
-        if channel == 0:
-            cmds = [f"{self._out_prefix(c)} OFF" for c in range(1, self.channels + 1)]
-        else:
-            self._check_channel(channel)
-            cmds = [f"{self._out_prefix(channel)} OFF"]
-        self.run_cmds(cmds)
-        return self
-
-    def close(self) -> None:
-        """关闭全部输出并释放 VISA 连接"""
-        self.output_disable(0)
-        super().close()
-
-
-class Agilent33512B(Agilent33500Base):
-    """Agilent 33512B 双通道信号发生器驱动"""
-
-    channels = 2
-
-    def __init__(self, resource: Resource | None) -> None:
-        super().__init__(resource)
-        logger.debug(f"Initializing AGILENT::33512B with {resource}")
-        self.params = {}
-
-    def setup(self, channel: int = 1, **kwargs) -> Self:
-        """初始化并配置波形及参数（wave/freq/vpp/offset 从 kwargs 获取）"""
-        self._check_channel(channel)
-        wave, freq, vpp, offset = self._parse_setup_args(kwargs)
-
-        self.params = {
-            "wave": wave,
-            "frequency": freq,
-            "amplitude": vpp,
-            "offset": offset,
-            "phase": kwargs.get("phase", 0.0),
-            "duty_cycle": kwargs.get("duty_cycle", 50.0),
-        }
-
-        if not (-360 <= self.params["phase"] <= 360):
+    def _validate(
+        self,
+        wave: str,
+        freq: float,
+        vpp: float,
+        offset: float,
+        phase: float,
+        duty_cycle: float,
+    ) -> None:
+        """校验波形参数范围（对照 SCPI 手册约束）"""
+        if not (-360 <= phase <= 360):
             raise ValueError("Phase out of range (-360 to 360)")
-
-        if not (0 <= self.params["duty_cycle"] <= 100):
+        if wave == "SQU" and not (0.01 <= duty_cycle <= 99.99):
+            raise ValueError("Duty cycle out of range (0.01 to 99.99)")
+        if wave == "RAMP" and not (0 <= duty_cycle <= 100):
             raise ValueError("Duty cycle out of range (0 to 100)")
+        if wave == "DC":
+            if abs(offset) >= self.Vmax:
+                raise ValueError("DC level out of range (±Vmax)")
+        else:
+            if freq <= 0:
+                raise ValueError("Frequency must be positive")
+            if vpp <= 0:
+                raise ValueError("Amplitude must be positive")
+            self._check_offset_limit(offset, vpp)
+
+    def setup(self, wave: str, *, channel: int = 1, **kwargs) -> Self:
+        """初始化并配置波形及参数（wave 必选位置参数，其余关键字参数按波形取舍）"""
+        self._check_channel(channel)
+        wave, freq, vpp, offset = self._parse_setup_args(wave, kwargs)
+        phase = kwargs.get("phase", 0.0)
+        duty_cycle = kwargs.get("duty_cycle", 50.0)
+        output_load, = pick_keys(kwargs, ["output_load"])
+        if output_load is not None:
+            self._resolve_load(output_load)
+        self._validate(wave, freq, vpp, offset, phase, duty_cycle)
+        self._wave = wave
+        self._vpp = vpp
+        self._offset = offset
+        self._phase = phase
 
         src = self._source_prefix(channel)
         out = self._out_prefix(channel)
 
-        cmds = [
-            f"{out}:LOAD INF",
-            f"{src}FUNCtion {self.params['wave']}",
-        ]
+        # 配置前先关闭全部通道输出，setup 仅保留当前通道处于已配置状态
+        for c in range(1, self.channels + 1):
+            self._output_states[c] = False
+            
+        cmds = [f"{self._out_prefix(c)} OFF" for c in range(1, self.channels + 1)]
+        cmds.extend(
+            [
+                f"{out}:LOAD {self._load}",
+                f"{src}FUNCtion {wave}",
+            ]
+        )
 
-        if self.params["wave"] == "DC":
-            cmds.append(f"{src}VOLTage:OFFSet {self.params['amplitude']}")
+        if wave == "DC":
+            cmds.append(f"{src}VOLTage:OFFSet {offset}")
         else:
-            cmds.extend([
-                f"{src}FREQuency {self.params['frequency']}",
-                f"{src}VOLTage {self.params['amplitude']}",
-                f"{src}VOLTage:OFFSet {self.params['offset']}",
-                f"{src}PHASe {self.params['phase']}",
-            ])
-            if self.params["wave"] == "SQU":
-                cmds.append(
-                    f"{src}FUNCtion:SQUare:DCYCle {self.params['duty_cycle']}"
-                )
-            elif self.params["wave"] == "RAMP":
-                cmds.append(
-                    f"{src}FUNCtion:RAMP:SYMMetry {self.params['duty_cycle']}"
-                )
+            cmds.extend(
+                [
+                    f"{src}FREQuency {freq}",
+                    f"{src}VOLTage {vpp}",
+                    f"{src}VOLTage:OFFSet {offset}",
+                    f"{src}PHASe {phase}",
+                ]
+            )
+            if wave == "SQU":
+                cmds.append(f"{src}FUNCtion:SQUare:DCYCle {duty_cycle}")
+            elif wave == "RAMP":
+                cmds.append(f"{src}FUNCtion:RAMP:SYMMetry {duty_cycle}")
 
-        cmds.extend([
-            f"{out} ON",
-            f"DISPlay:FOCus CH{channel}",
-        ])
+        if self.channel > 1:
+            # 只有支持多通道的型号才支持这个命令，否则会报错~
+            cmds.extend(
+                [
+                    f"DISPlay:FOCus CH{channel}",
+                ]
+            )
+
+        logger.debug(f'setup command: {";".join(cmds)}')
 
         if not self.run_cmds(cmds):
-            raise RuntimeError("Failed to configure Agilent33512B")
+            raise RuntimeError("Failed to configure Agilent 33500 series")
         self.beep()
         return self
 
     def set_frequency(self, freq: float, channel: int = 1) -> Self:
-        self.run_cmds([f"{self._source_prefix(channel)}FREQuency {freq}"])
+        if freq <= 0:
+            raise ValueError("Frequency must be positive")
+
+        cmds = [f"{self._source_prefix(channel)}FREQuency {freq}"]
+        logger.debug(f'set_frequency command: {";".join(cmds)}')
+        self.run_cmds(cmds)
+
         return self
 
     def set_amplitude(self, vpp: float, channel: int = 1) -> Self:
-        self.run_cmds([f"{self._source_prefix(channel)}VOLTage {vpp}"])
+        if self._wave == "DC":
+            raise ValueError("DC 波形无幅度参数，请用 set_offset 调整直流电平")
+        if vpp <= 0:
+            raise ValueError("Amplitude must be positive")
+        self._check_offset_limit(self._offset, vpp)
+
+        self._vpp = vpp
+        cmds = [f"{self._source_prefix(channel)}VOLTage {vpp}"]
+        logger.debug(f'set_amplitude command: {";".join(cmds)}')
+        self.run_cmds(cmds)
+
         return self
 
     def set_offset(self, offset: float, channel: int = 1) -> Self:
-        self.run_cmds([f"{self._source_prefix(channel)}VOLTage:OFFSet {offset}"])
+        if self._wave == "DC":
+            if abs(offset) >= self.Vmax:
+                raise ValueError("DC level out of range (±Vmax)")
+        else:
+            self._check_offset_limit(offset, self._vpp)
+        self._offset = offset
+        cmds = [f"{self._source_prefix(channel)}VOLTage:OFFSet {offset}"]
+        logger.debug(f'set_offset command: {";".join(cmds)}')
+        self.run_cmds(cmds)
         return self
 
+    def set_phase(self, phase: float, channel: int = 1) -> Self:
+        """设置初始相位（PHASe，单位由 UNIT:ANGLe 决定，默认度）"""
+        if not (-360 <= phase <= 360):
+            raise ValueError("Phase out of range (-360 to 360)")
+        self._phase = phase
+        cmds = [f"{self._source_prefix(channel)}PHASe {phase}"]
+        logger.debug(f'set_phase command: {";".join(cmds)}')
+        self.run_cmds(cmds)
+        return self
 
-class Agilent33519(Agilent33500Base):
-    """Agilent 33519 单通道信号发生器驱动"""
+    def _resolve_load(self, load: float | str) -> str:
+        """校验并记录负载，返回 OUTPut:LOAD 的 SCPI 值字符串
+
+        load: 数值 1Ω~10kΩ 或 'INFinity'（不区分大小写）
+        """
+        if isinstance(load, str):
+            if load.upper() not in ("INF", "INFINITY"):
+                raise ValueError("Load must be ohms (1-10000) or 'INFinity'")
+            self._load = "INF"
+            return "INF"
+        if not (1 <= load <= 10000):
+            raise ValueError("Load must be ohms (1-10000) or 'INFinity'")
+        self._load = float(load)
+        return str(load)
+
+    def set_output_load(self, load: float | str, channel: int = 1) -> Self:
+        """设置输出终止负载（OUTPut:LOAD）：数值 1Ω~10kΩ 或 INFinity"""
+        value = self._resolve_load(load)
+        cmds = [f"{self._out_prefix(channel)}:LOAD {value}"]
+        logger.debug(f'set_output_load command: {";".join(cmds)}')
+        self.run_cmds(cmds)
+        return self
+
+    def set_polarity(self, polarity: str, channel: int = 1) -> Self:
+        """设置输出波形极性（OUTPut:POLarity）：NORMal 或 INVerted"""
+        polarity_upper = polarity.upper()
+        if polarity_upper not in ("NORMAL", "NORM", "INVERTED", "INV"):
+            raise ValueError("Polarity must be NORMal or INVerted")
+        value = "NORMal" if polarity_upper.startswith("NORM") else "INVerted"
+        cmds = [f"{self._out_prefix(channel)}:POLarity {value}"]
+        logger.debug(f'set_polarity command: {";".join(cmds)}')
+        self.run_cmds(cmds)
+        return self
+
+    def output_enable(self, channel: int = 1) -> Self:
+        """使能指定通道输出"""
+        self._check_channel(channel)
+
+        if not self._output_states[channel]:
+            cmds = [f"{self._out_prefix(channel)} ON"]
+            logger.debug(f'output_enable command: {";".join(cmds)}')
+            if not self.run_cmds(cmds):
+                raise RuntimeError("Failed to enable output")
+            self._output_states[channel] = True
+        return self
+
+    def output_disable(self, channel: int = 1) -> Self:
+        """关闭指定通道输出"""
+        self._check_channel(channel)
+
+        if self._output_states[channel]:
+            cmds = [f"{self._out_prefix(channel)} OFF"]
+            logger.debug(f'output_disable command: {";".join(cmds)}')
+            self.run_cmds(cmds)
+            self._output_states[channel] = False
+        return self
+
+    def _close(self) -> None:
+        """关闭全部输出并释放 VISA 连接"""
+        for c in range(1, self.channels + 1):
+            self.output_disable(c)
+        super()._close()
+
+
+class Agilent33519B(Agilent33500Base):
+    """Agilent 33519B 单通道信号发生器驱动（30 MHz，无任意波形）"""
 
     channels = 1
 
-    Vmax = 20  # 输出最大电压值
 
-    def __init__(self, resource: Resource | None) -> None:
-        super().__init__(resource)
-        logger.debug(f"Initializing AGILENT::33519 with {resource}")
-        self.output_load = "INFinity"
-        self.cfg = {
-            "wave": "sin",
-            "freq": 1000,
-            "vpp": 3.3,
-            "offset": 1.65,
-        }
+class Agilent33522B(Agilent33500Base):
+    """Agilent 33522B 双通道信号发生器驱动（30 MHz，支持任意波形）"""
 
-    def setup(self, channel: int = 1, **kwargs) -> Self:
-        """初始化并配置波形及参数（wave/freq/vpp/offset 从 kwargs 获取）"""
-        self._check_channel(channel)
-        wave, freq, vpp, offset = self._parse_setup_args(kwargs)
+    channels = 2
 
-        self.cfg["wave"] = wave
-        self.cfg["freq"] = freq
-        self.cfg["vpp"] = vpp
-        self.cfg["offset"] = offset
 
-        limit = self.Vmax - vpp / 2
-        if abs(offset) >= limit:
-            raise ValueError("|offset| must be less than (Vmax - vpp/2)")
+class Agilent33612A(Agilent33500Base):
+    """Agilent 33612A 双通道信号发生器驱动（80 MHz，支持任意波形）"""
 
-        self.run_cmds([f"{self._out_prefix(channel)}:LOAD {self.output_load}"])
-
-        self._apply_waveform(channel)
-        return self
-
-    def _apply_waveform(self, channel: int = 1) -> None:
-        """应用当前波形配置"""
-        prefix = self._source_prefix(channel)
-        if self.cfg["wave"] == "DC":
-            cmd = f"{prefix}APPL:DC DEF,DEF,{self.cfg['offset']}"
-        else:
-            cmd = f"{prefix}APPL:{self.cfg['wave']} {self.cfg['freq']},{self.cfg['vpp']},{self.cfg['offset']}"
-
-        self.run_cmds([cmd])
-
-    def set_frequency(self, freq: float, channel: int = 1) -> Self:
-        self._check_channel(channel)
-        self.cfg["freq"] = freq
-        self._apply_waveform(channel)
-        return self
-
-    def set_amplitude(self, vpp: float, channel: int = 1) -> Self:
-        self._check_channel(channel)
-        self.cfg["vpp"] = vpp
-        self._apply_waveform(channel)
-        return self
-
-    def set_offset(self, offset: float, channel: int = 1) -> Self:
-        self._check_channel(channel)
-        self.cfg["offset"] = offset
-        self._apply_waveform(channel)
-        return self
+    channels = 2
 
 
 # 注册到仪器注册表
 InstrumentRegistry.register_waveform_generator(
-    "AGILENT::33512B",
-    Agilent33512B,
+    "AGILENT::33519B",
+    Agilent33519B,
     supported=("WAVEFORM",),
 )
 InstrumentRegistry.register_waveform_generator(
-    "AGILENT::33519",
-    Agilent33519,
+    "AGILENT::33522B",
+    Agilent33522B,
+    supported=("WAVEFORM",),
+)
+InstrumentRegistry.register_waveform_generator(
+    "AGILENT::33612A",
+    Agilent33612A,
     supported=("WAVEFORM",),
 )

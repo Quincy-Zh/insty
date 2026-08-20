@@ -1,4 +1,4 @@
-# 数字电源：ITECH::IT6302
+# ITECH IT6302 数字电源
 
 from __future__ import annotations
 
@@ -23,15 +23,10 @@ class ItechIT6302(VisaBasedInstrument, PowerSupply):
         super().__init__(resource)
         logger.debug(f"Initializing Itech::IT6302 with {resource}")
         self.channel = 1
-        self.beep_ = False
         self.output_enabled = False
 
         cmds = ["SYSTem:REMote"]
         self.run_cmds(cmds)
-
-    def beep(self):
-        if self.beep_:
-            self.run_cmds(["SYSTem:BEEPer"])
 
     def set_voltage(self, volt: float, channel: int = 1) -> Self:
         """设置输出电压并自动使能输出"""
@@ -83,7 +78,7 @@ class ItechIT6302(VisaBasedInstrument, PowerSupply):
         self.output_enabled = False
         return self
 
-    def close(self) -> None:
+    def _close(self) -> None:
         """关闭仪器：设置安全电压、关闭输出并释放 VISA 连接"""
         try:
             self.set_voltage(3.3, 3)
@@ -93,7 +88,7 @@ class ItechIT6302(VisaBasedInstrument, PowerSupply):
             self.run_cmds(["SYSTem:Loc"])
         except Exception as ex:
             logger.warning(f"Error during close: {ex}")
-        super().close()
+        super()._close()
 
 
 # 注册到仪器注册表

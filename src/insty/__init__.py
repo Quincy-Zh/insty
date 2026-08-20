@@ -6,8 +6,6 @@
 驱动在各自模块末尾通过 ``InstrumentRegistry.register_*`` 显式注册
 （如 ``register_oscilloscope("ZHIYUAN::ZDS1104", ZDS1104, supported=...)``）。
 导入 ``insty`` 时由 ``drivers`` 包级联导入各驱动以完成注册。
-
-测试报告与单位换算（``Report``）在 ``utils.report``，与仪器无关。
 """
 
 from __future__ import annotations

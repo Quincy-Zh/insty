@@ -16,7 +16,7 @@ class VisaBasedInstrument:
         """初始化 VISA 仪器"""
         self.visa_inst = resource
 
-    def close(self) -> None:
+    def _close(self) -> None:
         """关闭 VISA 连接（幂等：重复调用安全）"""
         if self.visa_inst is not None:
             try:
@@ -42,6 +42,10 @@ class VisaBasedInstrument:
                 logger.error(f'Fail to execute command "{cmd}": {ex}')
                 return False
         return True
+
+    def beep(self) -> None:
+        """发送蜂鸣命令（SYSTem:BEEPer）"""
+        self.run_cmds(["SYSTem:BEEPer"])
 
     def query(self, cmd: str) -> str | None:
         """查询命令并返回响应"""
@@ -75,7 +79,7 @@ class VisaBasedInstrument:
 
 # 导入所有驱动模块以触发注册
 from .drivers import (  # noqa: F401
-    agilent_3351x,
+    agilent_33500_33600,
     agilent_53220a,
     itech_it6302,
     keithley_dmm6500,

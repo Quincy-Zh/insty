@@ -56,11 +56,24 @@ def make_info(
                           inst_type=inst_type, supported=supported)
 
 
+def test_frange():
+    """frange 生成含端点的浮点等差数列，step 为 0 抛 ValueError"""
+    from insty import frange
+    assert frange(0, 1, 0.25) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert frange(1, 3) == [1.0, 2.0, 3.0]
+    assert frange(1, 0.25, -0.25) == [1.0, 0.75, 0.5, 0.25]
+    assert frange(0, 1, 0.3) == [0.0, 0.3, 0.6, 0.9, 1.0]
+    # 端点不在网格上时追加补上，保证 stop 一定包含
+    assert frange(1.8, 3.6, 0.25) == [1.8, 2.05, 2.3, 2.55, 2.8, 3.05, 3.3, 3.55, 3.6]
+    with pytest.raises(ValueError):
+        frange(0, 1, 0)
+
+
 # ── 基础测试 ──────────────────────────────────────────────
 
 def test_make_instances():
-    _33512B = make_instrument("AGILENT::33512B", None)
-    assert isinstance(_33512B, VisaBasedInstrument)
+    _33522B = make_instrument("AGILENT::33522B", None)
+    assert isinstance(_33522B, VisaBasedInstrument)
 
     ATS_710 = make_instrument("TEMPTRONIC::ATS-710", None)
     assert isinstance(ATS_710, VisaBasedInstrument)
@@ -193,9 +206,9 @@ def test_setup_default_and_driver_impl():
     assert osc.setup(baudrate=115200) is osc
 
 
-def test_waveform_setup_from_kwargs():
-    """波形发生器 setup 从 kwargs 获取 wave/freq/vpp/offset"""
-    from insty.drivers.agilent_3351x import Agilent33512B
+def test_waveform_setup_wave_conditional_params():
+    """setup 的 wave 为必选位置参数，其余参数按波形取舍：DC 只需 vpp，freq/offset 忽略"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
 
     writes = []
 
@@ -206,18 +219,31 @@ def test_waveform_setup_from_kwargs():
         def close(self):
             pass
 
-    inst = Agilent33512B(FakeResource())
-    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
-    assert any("FUNCtion SIN" in c for c in writes)
-    assert any("FREQuency 1000.0" in c for c in writes)
+    inst = Agilent33522B(FakeResource())
+    with pytest.raises(TypeError):
+        inst.setup()
+
+    inst.setup("DC", offset=2.5)
+    assert any("VOLTage:OFFSet 2.5" in c for c in writes)
+    assert not any("FREQuency" in c for c in writes)
 
     with pytest.raises(KeyError):
-        inst.setup(wave="SIN")
+        inst.setup("DC")
+    # 非 DC 波形仍需 freq/vpp/offset
+    with pytest.raises(KeyError):
+        inst.setup("SIN", freq=1000.0, vpp=3.3)
+    # channel 为 keyword-only，不能按位置传
+    with pytest.raises(TypeError):
+        inst.setup("SIN", 2, freq=1000.0, vpp=3.3, offset=0.0)
+    # channel 关键字传参 + wave 位置传参
+    writes.clear()
+    inst.setup("SIN", channel=2, freq=1000.0, vpp=3.3, offset=0.0)
+    assert any("SOURce2:FREQuency 1000.0" in c for c in writes)
 
 
 def test_waveform_channels_and_channel_param():
     """基类 channels 属性与 channel 参数校验"""
-    from insty.drivers.agilent_3351x import Agilent33512B, Agilent33519
+    from insty.drivers.agilent_33500_33600 import Agilent33519B, Agilent33522B
 
     class FakeResource:
         def write(self, cmd):
@@ -226,20 +252,51 @@ def test_waveform_channels_and_channel_param():
         def close(self):
             pass
 
-    inst = Agilent33512B(FakeResource())
+    inst = Agilent33522B(FakeResource())
     assert inst.channels == 2
     with pytest.raises(ValueError):
         inst.setup(channel=3, wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
 
-    inst19 = Agilent33519(FakeResource())
+    inst19 = Agilent33519B(FakeResource())
     assert inst19.channels == 1
     with pytest.raises(ValueError):
         inst19.output_enable(channel=2)
 
 
-def test_waveform_output_disable_all_channels():
-    """output_disable(0) 关闭全部通道（33512B 双通道）"""
-    from insty.drivers.agilent_3351x import Agilent33512B
+def test_waveform_output_all_channels_via_close():
+    """channel=0 不再支持，close() 逐通道关闭全部输出（33522B 双通道）"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            writes.append("_closed")
+
+    inst = Agilent33522B(FakeResource())
+    with pytest.raises(ValueError):
+        inst.output_disable(0)
+    with pytest.raises(ValueError):
+        inst.output_enable(0)
+    # 先开启两通道，close() 逐通道关闭已开启的输出
+    inst.output_enable(1)
+    inst.output_enable(2)
+    inst.close()
+    assert writes == [
+        "OUTPut1 ON",
+        "OUTPut2 ON",
+        "OUTPut1 OFF",
+        "OUTPut2 OFF",
+        "_closed",
+    ]
+
+
+def test_waveform_output_state_tracking():
+    """output_enable/disable 状态幂等（重复调用不重复下发），setup 先关闭全部通道"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
 
     writes = []
 
@@ -250,38 +307,54 @@ def test_waveform_output_disable_all_channels():
         def close(self):
             pass
 
-    inst = Agilent33512B(FakeResource())
-    inst.output_disable(0)
-    assert writes == ["OUTPut1 OFF", "OUTPut2 OFF"]
+    inst = Agilent33522B(FakeResource())
+    # 幂等：已开启的通道重复 enable 不重复下发；已关闭的通道重复 disable 不重复下发
+    inst.output_enable(1)
+    inst.output_enable(1)
+    assert writes == ["OUTPut1 ON"]
+    writes.clear()
+    inst.output_disable(1)
+    inst.output_disable(1)
+    assert writes == ["OUTPut1 OFF"]
+
+    # setup 会先关闭全部通道，再配置当前通道
+    writes.clear()
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
+    assert writes[0] == "OUTPut1 OFF"
+    assert writes[1] == "OUTPut2 OFF"
+    # setup 后状态已重置，重新 enable 需再下发
+    writes.clear()
+    inst.output_enable(2)
+    assert writes == ["OUTPut2 ON"]
 
 
 def test_waveform_channel_specific_command():
     """多通道按 channel 下发命令，单通道无数字后缀"""
-    from insty.drivers.agilent_3351x import Agilent33512B, Agilent33519
+    from insty.drivers.agilent_33500_33600 import Agilent33519B, Agilent33522B
 
-    writes_12b = []
+    writes_22b = []
 
-    class Fake12B(Agilent33512B):
+    class Fake22B(Agilent33522B):
         def run_cmds(self, cmds):
-            writes_12b.extend(cmds)
+            writes_22b.extend(cmds)
             return True
 
-    inst = Fake12B(None)
+    inst = Fake22B(None)
     inst.output_enable(channel=2)
-    assert writes_12b == ["OUTPut2 ON"]
+    assert writes_22b == ["OUTPut2 ON"]
     inst.set_frequency(1000.0, channel=2)
-    assert "SOURce2:FREQuency 1000.0" in writes_12b
+    assert "SOURce2:FREQuency 1000.0" in writes_22b
 
-    writes_19 = []
+    writes_19b = []
 
-    class Fake19(Agilent33519):
+    class Fake19B(Agilent33519B):
         def run_cmds(self, cmds):
-            writes_19.extend(cmds)
+            writes_19b.extend(cmds)
             return True
 
-    inst19 = Fake19(None)
+    inst19 = Fake19B(None)
     inst19.output_enable()
-    assert writes_19 == ["OUTPut ON"]
+    assert writes_19b == ["OUTPut ON"]
 
 
 def test_pick_keys():
@@ -297,7 +370,7 @@ def test_pick_keys():
 
 def test_waveform_setup_case_insensitive():
     """波形发生器 setup 支持大小写混合的 kwargs key"""
-    from insty.drivers.agilent_3351x import Agilent33512B
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
 
     writes = []
 
@@ -308,9 +381,183 @@ def test_waveform_setup_case_insensitive():
         def close(self):
             pass
 
-    inst = Agilent33512B(FakeResource())
-    inst.setup(WAVE="SIN", FREQ=1000.0, Vpp=3.3, Offset=0.0)
+    inst = Agilent33522B(FakeResource())
+    inst.setup(wave="SIN", FREQ=1000.0, Vpp=3.3, Offset=0.0)
     assert any("FREQuency 1000.0" in c for c in writes)
+
+
+def test_waveform_parameter_validation():
+    """setup 参数校验：偏置上限/直流电平/频率幅度下界/占空比范围"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
+
+    class FakeResource:
+        def write(self, cmd):
+            pass
+
+        def close(self):
+            pass
+
+    inst = Agilent33522B(FakeResource())
+
+    # |offset| 必须小于 Vmax - vpp/2（高阻 10V 峰值，vpp=3.3 时上限 8.35）
+    with pytest.raises(ValueError):
+        inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=9.0)
+    # 频率/幅度必须为正
+    with pytest.raises(ValueError):
+        inst.setup(wave="SIN", freq=0.0, vpp=3.3, offset=0.0)
+    with pytest.raises(ValueError):
+        inst.setup(wave="SIN", freq=1000.0, vpp=-1.0, offset=0.0)
+    # DC 电平不超过 ±Vmax
+    with pytest.raises(ValueError):
+        inst.setup(wave="DC", offset=12.0)
+    # SQU 占空比 0.01~99.99
+    with pytest.raises(ValueError):
+        inst.setup(wave="SQU", freq=1000.0, vpp=3.3, offset=0.0, duty_cycle=0.0)
+    with pytest.raises(ValueError):
+        inst.setup(wave="SQU", freq=1000.0, vpp=3.3, offset=0.0, duty_cycle=100.0)
+    # RAMP 对称性 0~100 允许 100
+    inst.setup(wave="RAMP", freq=1000.0, vpp=3.3, offset=0.0, duty_cycle=100.0)
+
+
+def test_waveform_setter_incremental_validation():
+    """set_offset/set_amplitude 增量修改时复用偏置上限校验"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
+
+    class FakeResource:
+        def write(self, cmd):
+            pass
+
+        def close(self):
+            pass
+
+    inst = Agilent33522B(FakeResource())
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
+    # setup 后单独加大偏置应被拦截（10 - 3.3/2 = 8.35）
+    with pytest.raises(ValueError):
+        inst.set_offset(9.0)
+    # 增大幅度使现有偏置越界应被拦截
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=5.0)
+    with pytest.raises(ValueError):
+        inst.set_amplitude(15.0)
+    # DC 模式 set_offset 校验 ±Vmax
+    inst.setup(wave="DC", offset=5.0)
+    with pytest.raises(ValueError):
+        inst.set_offset(11.0)
+    # DC 模式无幅度概念，set_amplitude 应被拒绝
+    with pytest.raises(ValueError):
+        inst.set_amplitude(2.0)
+
+
+def test_waveform_output_load():
+    """set_output_load 校验并下发 OUTPut:LOAD，setup 沿用当前负载"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33522B(FakeResource())
+    inst.set_output_load(50)
+    assert "OUTPut1:LOAD 50" in writes
+    inst.set_output_load("infinity", channel=2)
+    assert "OUTPut2:LOAD INF" in writes
+    with pytest.raises(ValueError):
+        inst.set_output_load(0)
+    with pytest.raises(ValueError):
+        inst.set_output_load(20000)
+    with pytest.raises(ValueError):
+        inst.set_output_load("HIGH")
+
+    writes.clear()
+    inst.set_output_load(50)
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
+    assert any("OUTPut1:LOAD 50" in c for c in writes)
+
+    # setup 直接指定 output_load
+    writes.clear()
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0, output_load=50)
+    assert any("OUTPut1:LOAD 50" in c for c in writes)
+    writes.clear()
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0, output_load="INFinity")
+    assert any("OUTPut1:LOAD INF" in c for c in writes)
+    with pytest.raises(ValueError):
+        inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0, output_load=0)
+
+
+def test_waveform_polarity():
+    """set_polarity 校验并下发 OUTPut:POLarity"""
+    from insty.drivers.agilent_33500_33600 import Agilent33519B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33519B(FakeResource())
+    inst.set_polarity("INVerted")
+    assert writes == ["OUTPut:POLarity INVerted"]
+    writes.clear()
+    inst.set_polarity("NORM")
+    assert writes == ["OUTPut:POLarity NORMal"]
+    with pytest.raises(ValueError):
+        inst.set_polarity("REVERSE")
+
+
+def test_waveform_set_phase():
+    """set_phase 校验范围并下发 PHASe（多通道带通道号）"""
+    from insty.drivers.agilent_33500_33600 import Agilent33519B, Agilent33522B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33519B(FakeResource())
+    inst.set_phase(45.0)
+    assert writes == ["SOURce:PHASe 45.0"]
+    with pytest.raises(ValueError):
+        inst.set_phase(361.0)
+    with pytest.raises(ValueError):
+        inst.set_phase(-361.0)
+
+    inst22 = Agilent33522B(FakeResource())
+    writes.clear()
+    inst22.set_phase(30.0, channel=2)
+    assert writes == ["SOURce2:PHASe 30.0"]
+
+
+def test_waveform_vmax_follows_load():
+    """Vmax 随终止负载变化：50Ω 峰值 5V，偏置上限收窄"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
+
+    class FakeResource:
+        def write(self, cmd):
+            pass
+
+        def close(self):
+            pass
+
+    inst = Agilent33522B(FakeResource())
+    inst.set_output_load(50)
+    # 50Ω 下 |offset| < 5 - vpp/2 = 3.35
+    with pytest.raises(ValueError):
+        inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=4.0)
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=3.0)
+    with pytest.raises(ValueError):
+        inst.set_offset(4.0)
 
 
 def test_53220a_read_frequency_invalid_returns_none():
@@ -338,12 +585,12 @@ def test_53220a_read_frequency_invalid_returns_none():
 def test_format_idn():
     from insty.visa_backend import VisaTransportBackend
     assert VisaTransportBackend.format_idn("KEITHLEY, MODEL DMM6500") == "KEITHLEY::DMM6500"
-    assert VisaTransportBackend.format_idn("AGILENT, 33512B") == "AGILENT::33512B"
+    assert VisaTransportBackend.format_idn("AGILENT, 33522B") == "AGILENT::33522B"
 
 
 def test_registry_accessible():
     assert "KEITHLEY::DMM6500" in InstrumentRegistry._registry
-    assert "AGILENT::33512B" in InstrumentRegistry._registry
+    assert "AGILENT::33522B" in InstrumentRegistry._registry
 
 
 def test_register_type_methods():
@@ -850,7 +1097,8 @@ def test_multiple_backends_with_connection():
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
                 def stop(self): return 0
-                def close(self): return 0
+                def _close(self): return 0
+                def beep(self): return None
             return FakeInst()
 
     class BackendB(TransportBackend):
@@ -866,7 +1114,8 @@ def test_multiple_backends_with_connection():
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
                 def stop(self): return 0
-                def close(self): return 0
+                def _close(self): return 0
+                def beep(self): return None
             return FakeInst()
 
     mgr = InstrumentManager()
@@ -882,6 +1131,53 @@ def test_multiple_backends_with_connection():
 
     mgr.close("port_a")
     mgr.close("port_b")
+    mgr.shutdown()
+
+
+def test_manager_reopen_after_inst_close():
+    """实例 close() 后缓存失效，再次 open 会建立新连接而非复用已关闭实例"""
+    class ReopenBackend(TransportBackend):
+        def __init__(self):
+            super().__init__()
+            self.opened = 0
+
+        def _enum(self) -> list[str]:
+            return ["dev"]
+
+        def _identify(self, address: str) -> InstrumentInfo | None:
+            return make_info("dev", "VENDOR::OK") if address == "dev" else None
+
+        def open(self, address, label, timeout=30000):
+            self.opened += 1
+
+            class FakeInst(Instrument):
+                def __init__(self):
+                    self.visa_inst = object()
+
+                def _close(self):
+                    self.visa_inst = None
+
+                def beep(self):
+                    pass
+
+            return FakeInst()
+
+    mgr = InstrumentManager()
+    backend = ReopenBackend()
+    mgr.register_backend(backend)
+
+    inst1 = mgr.open("dev", "VENDOR::OK")
+    assert backend.opened == 1
+    # 未关闭：命中缓存复用同一实例
+    assert mgr.open("dev", "VENDOR::OK") is inst1
+    assert backend.opened == 1
+    # 实例 close() 后：重新打开，建立新连接
+    inst1.close()
+    inst2 = mgr.open("dev", "VENDOR::OK")
+    assert backend.opened == 2
+    assert inst2 is not inst1
+
+    mgr.close("dev")
     mgr.shutdown()
 
 
@@ -951,7 +1247,8 @@ def test_multiple_backends_fallback():
                 def get(self, *args, **kwargs): return None
                 def set(self, *args, **kwargs): return 0
                 def stop(self): return 0
-                def close(self): return 0
+                def _close(self): return 0
+                def beep(self): return None
             return FakeInst()
 
     mgr = InstrumentManager()
@@ -992,7 +1289,8 @@ def make_mock_backend(infos):
         def wait(self, timeout=150): return True
         def ready(self): return True
         def get_errors(self): return []
-        def close(self): pass
+        def _close(self): pass
+        def beep(self): pass
 
     class MockBackend(TransportBackend):
         def __init__(self, infos):

@@ -1,4 +1,3 @@
-# 示波器: ZHIYUAN::ZDS1000
 # 致远电子 ZDS1000 系列示波器
 
 from __future__ import annotations
@@ -189,9 +188,9 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
         s = self.query(":GLOBal:RUN:STATe?")
         return s.strip().lower() if s else ""
 
-    def close(self) -> None:
+    def _close(self) -> None:
         """释放 VISA 连接"""
-        super().close()
+        super()._close()
 
 
 # 注册到仪器注册表
