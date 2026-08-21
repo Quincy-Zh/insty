@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from pyvisa.resources import Resource
 from typing_extensions import Self
@@ -28,8 +29,10 @@ _WAVE_MAP = {
 class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
     """Agilent 33500/33600 系列信号发生器公共基类"""
 
-    # 通道数，子类赋予正确值
-    channels: int = 1
+    # 各波形最大频率（Hz），子类可覆盖
+    _FREQ_MAX: ClassVar[dict[str, float]] = {
+        "SIN": 30e6, "SQU": 25e6, "TRI": 200e3, "RAMP": 200e3,
+    }
 
     def __init__(self, resource: Resource | None) -> None:
         super().__init__(resource)
@@ -112,6 +115,9 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         else:
             if freq <= 0:
                 raise ValueError("Frequency must be positive")
+            max_f = self._FREQ_MAX.get(wave, 200e3)
+            if freq > max_f:
+                raise ValueError(f"Frequency {freq} Hz exceeds {wave} max {max_f} Hz")
             if vpp <= 0:
                 raise ValueError("Amplitude must be positive")
             self._check_offset_limit(offset, vpp)
@@ -125,6 +131,7 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         output_load, = pick_keys(kwargs, ["output_load"])
         if output_load is not None:
             self._resolve_load(output_load)
+        dut_high, dut_low, = pick_keys(kwargs, ["dut_high", "dut_low"])
         self._validate(wave, freq, vpp, offset, phase, duty_cycle)
         self._wave = wave
         self._vpp = vpp
@@ -142,9 +149,18 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         cmds.extend(
             [
                 f"{out}:LOAD {self._load}",
-                f"{src}FUNCtion {wave}",
+                f"{src}VOLTage:UNIT VPP",
             ]
         )
+        if dut_high is not None and dut_low is not None:
+            cmds.extend(
+                [
+                    f"{src}VOLTage:LIMit:HIGH {dut_high}",
+                    f"{src}VOLTage:LIMit:LOW {dut_low}",
+                    f"{src}VOLTage:LIMit:STATe ON",
+                ]
+            )
+        cmds.append(f"{src}FUNCtion {wave}")
 
         if wave == "DC":
             cmds.append(f"{src}VOLTage:OFFSet {offset}")
@@ -180,6 +196,9 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
     def set_frequency(self, freq: float, channel: int = 1) -> Self:
         if freq <= 0:
             raise ValueError("Frequency must be positive")
+        max_f = self._FREQ_MAX.get(self._wave, 200e3)
+        if freq > max_f:
+            raise ValueError(f"Frequency {freq} Hz exceeds {self._wave} max {max_f} Hz")
 
         cmds = [f"{self._source_prefix(channel)}FREQuency {freq}"]
         logger.debug(f'set_frequency command: {";".join(cmds)}')
@@ -246,6 +265,22 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         self.run_cmds(cmds)
         return self
 
+    def set_voltage_limit(self, high: float, low: float, channel: int = 1) -> Self:
+        """设置 DUT 电压保护限值（VOLTage:LIMit:HIGH/LOW + STATe ON）"""
+        if abs(high) > self.Vmax or abs(low) > self.Vmax:
+            raise ValueError("Limit exceeds Vmax")
+        if high <= low:
+            raise ValueError("HIGH must be greater than LOW")
+        src = self._source_prefix(channel)
+        cmds = [
+            f"{src}VOLTage:LIMit:HIGH {high}",
+            f"{src}VOLTage:LIMit:LOW {low}",
+            f"{src}VOLTage:LIMit:STATe ON",
+        ]
+        logger.debug(f'set_voltage_limit command: {";".join(cmds)}')
+        self.run_cmds(cmds)
+        return self
+
     def set_polarity(self, polarity: str, channel: int = 1) -> Self:
         """设置输出波形极性（OUTPut:POLarity）：NORMal 或 INVerted"""
         polarity_upper = polarity.upper()
@@ -274,7 +309,12 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         self._check_channel(channel)
 
         if self._output_states[channel]:
-            cmds = [f"{self._out_prefix(channel)} OFF"]
+            prefix = self._out_prefix(channel)
+            cmds = [
+                f"{self._source_prefix(channel)}VOLTage MIN",
+                f"{self._source_prefix(channel)}VOLTage:OFFSet 0",
+                f"{prefix} OFF",
+            ]
             logger.debug(f'output_disable command: {";".join(cmds)}')
             self.run_cmds(cmds)
             self._output_states[channel] = False
@@ -290,19 +330,29 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
 class Agilent33519B(Agilent33500Base):
     """Agilent 33519B 单通道信号发生器驱动（30 MHz，无任意波形）"""
 
-    channels = 1
+    @property
+    def channels(self) -> int:
+        return 1
 
 
 class Agilent33522B(Agilent33500Base):
     """Agilent 33522B 双通道信号发生器驱动（30 MHz，支持任意波形）"""
 
-    channels = 2
+    @property
+    def channels(self) -> int:
+        return 2
 
 
 class Agilent33612A(Agilent33500Base):
     """Agilent 33612A 双通道信号发生器驱动（80 MHz，支持任意波形）"""
 
-    channels = 2
+    @property
+    def channels(self) -> int:
+        return 2
+
+    _FREQ_MAX: ClassVar[dict[str, float]] = {
+        "SIN": 80e6, "SQU": 25e6, "TRI": 200e3, "RAMP": 200e3,
+    }
 
 
 # 注册到仪器注册表

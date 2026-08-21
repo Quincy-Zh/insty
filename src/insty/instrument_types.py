@@ -113,10 +113,16 @@ class PowerSupply(Instrument):
     """数字电源类型抽象基类
 
     支持接口:
+        channels: int — 输出通道数（只读）
         set_voltage(volt: float, channel: int = 1) -> Self
         output_enable(channel: int = 0) -> Self
         output_disable(channel: int = 0) -> Self
     """
+
+    @property
+    def channels(self) -> int:
+        """输出通道数（只读）"""
+        return 1
 
     @abstractmethod
     def set_voltage(self, volt: float, channel: int = 1) -> Self:
@@ -193,6 +199,7 @@ class WaveformGenerator(Instrument):
     """信号发生器类型抽象基类
 
     支持接口:
+        channels: int — 输出通道数（只读）
         setup(wave: str, *, channel: int = 1, **kwargs) -> Self
         output_enable(channel: int = 1) -> Self
         output_disable(channel: int = 1) -> Self
@@ -202,6 +209,11 @@ class WaveformGenerator(Instrument):
         set_phase(phase: float, channel: int = 1) -> Self
         set_output_load(load: float | str, channel: int = 1) -> Self
     """
+
+    @property
+    def channels(self) -> int:
+        """输出通道数（只读）"""
+        return 1
 
     def setup(self, wave: str, *, channel: int = 1, **kwargs) -> Self:
         """初始化并配置波形及参数

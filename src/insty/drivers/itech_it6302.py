@@ -28,6 +28,10 @@ class ItechIT6302(VisaBasedInstrument, PowerSupply):
         cmds = ["SYSTem:REMote"]
         self.run_cmds(cmds)
 
+    @property
+    def channels(self) -> int:
+        return 3
+
     def set_voltage(self, volt: float, channel: int = 1) -> Self:
         """设置输出电压并自动使能输出"""
         if not (0.0 <= volt <= 32.0):

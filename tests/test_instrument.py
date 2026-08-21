@@ -288,7 +288,11 @@ def test_waveform_output_all_channels_via_close():
     assert writes == [
         "OUTPut1 ON",
         "OUTPut2 ON",
+        "SOURce1:VOLTage MIN",
+        "SOURce1:VOLTage:OFFSet 0",
         "OUTPut1 OFF",
+        "SOURce2:VOLTage MIN",
+        "SOURce2:VOLTage:OFFSet 0",
         "OUTPut2 OFF",
         "_closed",
     ]
@@ -315,7 +319,7 @@ def test_waveform_output_state_tracking():
     writes.clear()
     inst.output_disable(1)
     inst.output_disable(1)
-    assert writes == ["OUTPut1 OFF"]
+    assert writes == ["SOURce1:VOLTage MIN", "SOURce1:VOLTage:OFFSet 0", "OUTPut1 OFF"]
 
     # setup 会先关闭全部通道，再配置当前通道
     writes.clear()
@@ -487,6 +491,90 @@ def test_waveform_output_load():
     assert any("OUTPut1:LOAD INF" in c for c in writes)
     with pytest.raises(ValueError):
         inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0, output_load=0)
+
+
+def test_waveform_frequency_limit():
+    """各波形频率上限校验：RAMP/TRI 200kHz，SIN 30MHz（33522B）/80MHz（33612A）"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B, Agilent33612A
+
+    class FakeResource:
+        def write(self, cmd):
+            pass
+
+        def close(self):
+            pass
+
+    inst = Agilent33522B(FakeResource())
+    # RAMP 超 200kHz 被拦截
+    with pytest.raises(ValueError, match="exceeds RAMP max"):
+        inst.setup(wave="RAMP", freq=300e3, vpp=3.3, offset=0.0)
+    # SIN 超 30MHz 被拦截
+    with pytest.raises(ValueError, match="exceeds SIN max"):
+        inst.setup(wave="SIN", freq=31e6, vpp=3.3, offset=0.0)
+    # set_frequency 同样校验
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
+    with pytest.raises(ValueError, match="exceeds SIN max"):
+        inst.set_frequency(31e6)
+
+    # 33612A SIN 上限 80MHz
+    inst3612 = Agilent33612A(FakeResource())
+    inst3612.setup(wave="SIN", freq=50e6, vpp=3.3, offset=0.0)  # 50MHz 合法
+    with pytest.raises(ValueError, match="exceeds SIN max"):
+        inst3612.setup(wave="SIN", freq=81e6, vpp=3.3, offset=0.0)
+
+
+def test_waveform_voltage_limit():
+    """set_voltage_limit 校验并下发 VOLTage:LIMit:HIGH/LOW + STATe ON"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33522B(FakeResource())
+    # high <= low 报错
+    with pytest.raises(ValueError, match="HIGH must be greater than LOW"):
+        inst.set_voltage_limit(0.0, 5.0)
+    # 超 Vmax 报错
+    with pytest.raises(ValueError, match="Limit exceeds Vmax"):
+        inst.set_voltage_limit(15.0, -15.0)
+
+    writes.clear()
+    inst.set_voltage_limit(3.3, -0.5)
+    assert any("VOLTage:LIMit:HIGH 3.3" in c for c in writes)
+    assert any("VOLTage:LIMit:LOW -0.5" in c for c in writes)
+    assert any("VOLTage:LIMit:STATe ON" in c for c in writes)
+
+
+def test_waveform_setup_dut_limit():
+    """setup 支持 dut_high/dut_low 可选参数下发 VOLTage:LIMit"""
+    from insty.drivers.agilent_33500_33600 import Agilent33522B
+
+    writes = []
+
+    class FakeResource:
+        def write(self, cmd):
+            writes.append(cmd)
+
+        def close(self):
+            pass
+
+    inst = Agilent33522B(FakeResource())
+    # 不传 dut_high/dut_low 时无 LIMit 命令
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
+    assert not any("LIMit" in c for c in writes)
+
+    # 传入后下发 LIMit 命令
+    writes.clear()
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0, dut_high=3.3, dut_low=-0.5)
+    assert any("VOLTage:LIMit:HIGH 3.3" in c for c in writes)
+    assert any("VOLTage:LIMit:LOW -0.5" in c for c in writes)
+    assert any("VOLTage:LIMit:STATe ON" in c for c in writes)
 
 
 def test_waveform_polarity():
