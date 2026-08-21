@@ -146,7 +146,7 @@ mgr.close_all()
 | 数字万用表 | `DMM` | KEITHLEY::DMM6500 |
 | 示波器 | `Oscilloscope` | ZHIYUAN::ZDS1000 |
 | 高低温发生器 | `ThermalChamber` | TEMPTRONIC::ATS710 |
-| 频率计数器 | `FrequencyCounter` | AGILENT::53220A |
+| 频率计数器 | `FrequencyCounter` | AGILENT::53220A, AGILENT::53230A |
 | 信号发生器 | `WaveformGenerator` | AGILENT::33519B, AGILENT::33522B, AGILENT::33612A |
 
 > 只要仪器支持标准 SCPI 指令集，`Insty` 就能通过 `InstrumentRegistry` 快速适配。欢迎提交 PR 新增厂商驱动！
@@ -198,7 +198,9 @@ mgr.close_all()
 | [`oscilloscope.py`](examples/oscilloscope.py) | 单次触发采集，读取频率/占空比，截图保存 |
 | [`thermal_chamber.py`](examples/thermal_chamber.py) | 温控设置、等待稳定、读取温度 |
 | [`power_supply.py`](examples/power_supply.py) | 电源电压设置与输出控制 |
-| [`frequency_counter.py`](examples/frequency_counter.py) | 频率与占空比测量 |
+| [`frequency_counter.py`](examples/frequency_counter.py) | 频率与占空比测量，通道参数配置 |
+| [`signal_verify.py`](examples/signal_verify.py) | 信号发生器 + 频率计联合验证（设定值与实测值对比） |
+| [`power_dmm_verify.py`](examples/power_dmm_verify.py) | 数字电源 + 万用表联合验证（输出电压精度对比） |
 | [`full_setup.py`](examples/full_setup.py) | 多仪器联合工作流（电源 + 波形 + 万用表） |
 
 ## 贡献

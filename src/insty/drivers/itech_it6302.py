@@ -49,7 +49,7 @@ class ItechIT6302(VisaBasedInstrument, PowerSupply):
 
         if not self.output_enabled:
             self.output_enable(channel)
-        self.beep()
+            
         return self
 
     def output_enable(self, channel: int = 0) -> Self:

@@ -183,7 +183,7 @@ def test_get_errors_exposed_on_type_classes():
 
 def test_setup_default_and_driver_impl():
     """setup 由 Instrument 提供默认实现，具体驱动可重写（ZDS 透传 configure）"""
-    from insty.drivers.agilent_53220a import Agilent53220A
+    from insty.drivers.agilent_53220_53230 import Agilent53220A
     from insty.drivers.zhiyuan_zds1000 import ZDS1104
 
     class FakeResource:
@@ -361,19 +361,8 @@ def test_waveform_channel_specific_command():
     assert writes_19b == ["OUTPut ON"]
 
 
-def test_pick_keys():
-    """pick_keys 按 key 顺序返回元组，忽略大小写，缺失为 None"""
-    from insty.utils import pick_keys
-
-    src = {"WAVE": "SIN", "Freq": 1000.0, "VPP": 3.3, "other": 1}
-    assert pick_keys(src, ["wave", "freq", "vpp"]) == ("SIN", 1000.0, 3.3)
-
-    assert pick_keys({}, ["a", "b"]) == (None, None)
-    assert pick_keys(src, ["wave", "nope"]) == ("SIN", None)
-
-
-def test_waveform_setup_case_insensitive():
-    """波形发生器 setup 支持大小写混合的 kwargs key"""
+def test_waveform_setup_lowercase_params():
+    """波形发生器 setup 参数名必须为小写，参数值大小写不敏感"""
     from insty.drivers.agilent_33500_33600 import Agilent33522B
 
     writes = []
@@ -386,7 +375,7 @@ def test_waveform_setup_case_insensitive():
             pass
 
     inst = Agilent33522B(FakeResource())
-    inst.setup(wave="SIN", FREQ=1000.0, Vpp=3.3, Offset=0.0)
+    inst.setup(wave="SIN", freq=1000.0, vpp=3.3, offset=0.0)
     assert any("FREQuency 1000.0" in c for c in writes)
 
 
@@ -650,7 +639,7 @@ def test_waveform_vmax_follows_load():
 
 def test_53220a_read_frequency_invalid_returns_none():
     """53220A 读取到 INFinity 或 >= 9.9E+37 视为无效，返回 None"""
-    from insty.drivers.agilent_53220a import Agilent53220A
+    from insty.drivers.agilent_53220_53230 import Agilent53220A
 
     class FakeResource:
         def __init__(self, resp):

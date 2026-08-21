@@ -2,21 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+_INVALID_THRESHOLD = 9.9e37
 
 
-def pick_keys(mapping: dict[str, Any], keys: list[str]) -> tuple[Any, ...]:
-    """从映射中摘出指定 key 对应的值，key 比较忽略大小写
-
-    Args:
-        mapping: 源映射（如 ``**kwargs`` 生成的字典）
-        keys: 要摘出的 key 列表
-
-    Returns:
-        按 ``keys`` 顺序排列的元组；未命中的 key 对应 ``None``
-    """
-    lower_map = {k.lower(): v for k, v in mapping.items()}
-    return tuple(lower_map.get(k.lower()) for k in keys)
+def is_invalid_reading(value: float) -> bool:
+    """判断 VISA 读数是否为无效值（>= 9.9e37 表示 INFinity / 错误）"""
+    return value >= _INVALID_THRESHOLD
 
 
 def frange(start: float, stop: float, step: float = 1.0) -> list[float]:

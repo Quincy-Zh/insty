@@ -33,7 +33,7 @@ from .instrument_types import (
 )
 from .manager import InstrumentManager
 from .transport_backend import TransportBackend
-from .utils import frange
+from .utils import frange, is_invalid_reading
 from .visa_backend import VisaTransportBackend
 
 __all__ = [
@@ -51,5 +51,6 @@ __all__ = [
     "VisaTransportBackend",
     "WaveformGenerator",
     "frange",
+    "is_invalid_reading",
     "make_instrument",
 ]

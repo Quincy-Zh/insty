@@ -17,7 +17,7 @@ print(wg.get_errors())
 # 配置通道2：10 kHz 方波，50% 占空比
 # 立即输出
 if wg.channels > 1:
-    wg.setup("SQU", channel=2, freq=10e3, vpp=5.0, offset=0.0, duty_cycle=50.0).output_enable(2)
+    wg.setup("SQU", channel=2, freq=10e3, vpp=5.0, offset=0.0, duty_cycle=70.0).output_enable(2)
 
 # 增量修改：把通道1频率改为 2 kHz（不影响其他参数）
 wg.set_frequency(2e3, channel=1)

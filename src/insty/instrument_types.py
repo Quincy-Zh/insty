@@ -334,17 +334,40 @@ class FrequencyCounter(Instrument):
     """频率计类型抽象基类
 
     支持接口:
-        read_frequency() -> Optional[float]
-        read_duty_cycle() -> Optional[float]
+        channels: int — 输入通道数（只读）
+        setup(*, channel: int = 1, **kwargs) -> Self
+        read_frequency(channel: int = 1) -> Optional[float]
+        read_duty_cycle(channel: int = 1) -> Optional[float]
     """
 
+    @property
+    def channels(self) -> int:
+        """输入通道数（只读）"""
+        return 1
+
+    def setup(self, *, channel: int = 1, **kwargs) -> Self:
+        """配置输入通道参数, 驱动校验参数不合法会抛异常 ValueError
+
+        Args:
+            channel: 操作通道号
+            coupling: 输入耦合方式, 'AC' 或 'DC', 默认 'DC'
+            impedance: 输入阻抗(Ω) , 默认 1e6
+            range: 输入电压量程(V), 默认 5
+            threshold: 输入阈值电压, 数字(单位V) 或者 字符（百分比） 或者 None(自动), 默认 None
+            low_pass_filter: 是否使能低通滤波器, True(开)/False(关), 默认关
+
+        Returns:
+            Self: 支持链式调用
+        """
+        return self
+
     @abstractmethod
-    def read_frequency(self) -> float | None:
+    def read_frequency(self, channel: int = 1) -> float | None:
         """测量波形频率(Hz), 失败时返回 None"""
         raise NotImplementedError
 
     @abstractmethod
-    def read_duty_cycle(self) -> float | None:
+    def read_duty_cycle(self, channel: int = 1) -> float | None:
         """测量波形占空比(比值 0~1), 失败时返回 None"""
         raise NotImplementedError
 

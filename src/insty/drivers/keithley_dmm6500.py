@@ -11,6 +11,7 @@ from ..instrument_types import (
     DMM,
     InstrumentRegistry,
 )
+from ..utils import is_invalid_reading
 from ..visa_based_instrument import VisaBasedInstrument
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,9 @@ class KeithleyDMM6500(VisaBasedInstrument, DMM):
             cmd = f':TRACe:STATistics:{el}? "{buffer_name}"'
             resp = self.query(cmd)
             if resp:
-                statistics_values[el.lower()] = float(resp)
+                val = float(resp)
+                if not is_invalid_reading(val):
+                    statistics_values[el.lower()] = val
         return statistics_values
 
     def _wait_buffer_ready(

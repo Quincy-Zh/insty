@@ -13,7 +13,6 @@ from ..instrument_types import (
     InstrumentRegistry,
     Oscilloscope,
 )
-from ..utils import pick_keys
 from ..visa_based_instrument import VisaBasedInstrument
 
 logger = logging.getLogger(__name__)
@@ -40,7 +39,7 @@ class ZDS1104(VisaBasedInstrument, Oscilloscope):
 
     def setup(self, **kwargs) -> Self:
         """初始化示波器参数（baudrate/signal/key）"""
-        baudrate, signal, key = pick_keys(kwargs, ["baudrate", "signal", "key"])
+        baudrate, signal, key = kwargs.get("baudrate"), kwargs.get("signal"), kwargs.get("key")
         if baudrate is not None:
             assert self.visa_inst is not None
             self.visa_inst.set_visa_attribute(VI_ATTR_TMO_VALUE, 10000)  # type: ignore

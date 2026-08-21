@@ -80,7 +80,7 @@ class VisaBasedInstrument:
 # 导入所有驱动模块以触发注册
 from .drivers import (  # noqa: F401
     agilent_33500_33600,
-    agilent_53220a,
+    agilent_53220_53230,
     itech_it6302,
     keithley_dmm6500,
     temptronic_ats_710,

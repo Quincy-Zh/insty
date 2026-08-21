@@ -12,7 +12,6 @@ from ..instrument_types import (
     InstrumentRegistry,
     WaveformGenerator,
 )
-from ..utils import pick_keys
 from ..visa_based_instrument import VisaBasedInstrument
 
 logger = logging.getLogger(__name__)
@@ -79,7 +78,7 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         if wave_upper not in _WAVE_MAP:
             raise ValueError(f'Unsupported wave type: {wave}')
         wave = _WAVE_MAP[wave_upper]
-        freq, vpp, offset = pick_keys(kwargs, ["freq", "vpp", "offset"])
+        freq, vpp, offset = kwargs.get("freq"), kwargs.get("vpp"), kwargs.get("offset")
         if wave == "DC":
             if offset is None:
                 raise KeyError("Missing required parameter: offset")
@@ -128,10 +127,10 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
         wave, freq, vpp, offset = self._parse_setup_args(wave, kwargs)
         phase = kwargs.get("phase", 0.0)
         duty_cycle = kwargs.get("duty_cycle", 50.0)
-        output_load, = pick_keys(kwargs, ["output_load"])
+        output_load = kwargs.get("output_load")
         if output_load is not None:
             self._resolve_load(output_load)
-        dut_high, dut_low, = pick_keys(kwargs, ["dut_high", "dut_low"])
+        dut_high, dut_low = kwargs.get("dut_high"), kwargs.get("dut_low")
         self._validate(wave, freq, vpp, offset, phase, duty_cycle)
         self._wave = wave
         self._vpp = vpp
@@ -190,7 +189,7 @@ class Agilent33500Base(VisaBasedInstrument, WaveformGenerator):
 
         if not self.run_cmds(cmds):
             raise RuntimeError("Failed to configure Agilent 33500 series")
-        self.beep()
+        
         return self
 
     def set_frequency(self, freq: float, channel: int = 1) -> Self:
