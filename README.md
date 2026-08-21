@@ -73,7 +73,7 @@ osc.execute("single")
 freq = osc.read_frequency()
 print(f"信号频率: {freq:.2f} Hz")  # 信号频率: 1000.00 Hz
 
-mngr.close_all()
+mngr.shutdown()
 ```
 
 **可用类别接口：**
@@ -186,6 +186,20 @@ mgr.close_all()
 **工具函数：**
 - `make_instrument(name, resource)` — 驱动工厂方法
 - `frange(start, stop, step)` — 浮点等差数列（含端点）
+
+## 更多示例
+
+`examples/` 目录包含可直接运行的完整脚本（需连接真实仪器）：
+
+| 示例 | 说明 |
+| :--- | :--- |
+| [`waveform_generator.py`](examples/waveform_generator.py) | 配置双通道波形、增量改频、DUT 电压保护 |
+| [`dmm_read.py`](examples/dmm_read.py) | 读取电压/电流，自定义量程与滤波参数 |
+| [`oscilloscope.py`](examples/oscilloscope.py) | 单次触发采集，读取频率/占空比，截图保存 |
+| [`thermal_chamber.py`](examples/thermal_chamber.py) | 温控设置、等待稳定、读取温度 |
+| [`power_supply.py`](examples/power_supply.py) | 电源电压设置与输出控制 |
+| [`frequency_counter.py`](examples/frequency_counter.py) | 频率与占空比测量 |
+| [`full_setup.py`](examples/full_setup.py) | 多仪器联合工作流（电源 + 波形 + 万用表） |
 
 ## 贡献
 
